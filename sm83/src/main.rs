@@ -309,7 +309,7 @@ fn main() {
     //run_native(Box::new(cpu.clone()), native_options);
 
 
-    let path = Path::new("/home/thale/scratch/DMG_ROM.bin");
+    let path = Path::new("/Users/thales/Documents/GitHub/fragile-canvas/ROMs/DMG_ROM.bin");
     //let path = Path::new("/home/thale/scratch/Tetris (USA) (Rev-A).gb");
     let display = path.display();
     // println!("{}", display);

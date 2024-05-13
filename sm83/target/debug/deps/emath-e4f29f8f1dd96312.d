@@ -1,0 +1,13 @@
+/Users/thales/Documents/GitHub/fragile-canvas/sm83/target/debug/deps/libemath-e4f29f8f1dd96312.rmeta: /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/lib.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/align.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/numeric.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/pos2.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect_transform.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rot2.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/smart_aim.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/vec2.rs
+
+/Users/thales/Documents/GitHub/fragile-canvas/sm83/target/debug/deps/emath-e4f29f8f1dd96312.d: /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/lib.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/align.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/numeric.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/pos2.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect_transform.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rot2.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/smart_aim.rs /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/vec2.rs
+
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/lib.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/align.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/numeric.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/pos2.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rect_transform.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/rot2.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/smart_aim.rs:
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/emath-0.14.0/src/vec2.rs:
