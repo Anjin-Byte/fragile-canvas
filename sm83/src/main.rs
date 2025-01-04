@@ -3,9 +3,58 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-//use std::env;
-use eframe::egui::{Color32, Label, ScrollArea};
-use eframe::{egui::CentralPanel, epi::App};
+pub mod bit_twiddling_utils {
+    pub fn set_bit(value: u8, bit: u8) -> u8 {
+        value | (1 << bit)
+    }
+
+    pub fn reset_bit(value: u8, bit: u8) -> u8 {
+        value & !(1 << bit)
+    }
+
+    pub fn toggle_bit(value: u8, bit: u8) -> u8 {
+        value ^ (1 << bit)
+    }
+
+    pub fn is_bit_set(value: u8, bit: u8) -> bool {
+        (value & (1 << bit)) != 0
+    }
+}
+
+#[derive(Debug, Clone)]
+enum RegisterType {
+    PC,
+    SP,
+    A,
+    F,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+    AF,
+    BC,
+    DE,
+    HL,
+    IR,
+    IE,
+}
+
+pub enum Flag {
+    Zero = 7,
+    Subtract = 6,
+    HalfCarry = 5,
+    Carry = 4,
+}
+
+pub enum Interrupt {
+    VBlank = 0,
+    LCDStat = 1,
+    Timer = 2,
+    Serial = 3,
+    Joypad = 4,
+}
 
 #[derive(Clone)]
 struct RegisterFile {
@@ -25,22 +74,22 @@ struct RegisterFile {
 
 impl fmt::Display for RegisterFile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[")?;
-        fmt::Display::fmt(&self.pc, f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.sp, f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.a, f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.get_bc(), f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.get_de(), f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.get_hl(), f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.ir, f)?;
-        f.write_str(", ")?;
-        fmt::Display::fmt(&self.ie, f)?;
+        f.write_str("[PC: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::PC))?;
+        f.write_str(" | SP: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::SP))?;
+        f.write_str(" | AF: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::AF))?;
+        f.write_str(" | BC: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::BC))?;
+        f.write_str(" | DE: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::DE))?;
+        f.write_str(" | HL: 0x")?;
+        write!(f, "{:#^04X}", self.read_register(&RegisterType::HL))?;
+        f.write_str(" | IR: 0x")?;
+        write!(f, "{:#^02X}", self.read_register(&RegisterType::IR))?;
+        f.write_str(" | IE: 0x")?;
+        write!(f, "{:#^02X}", self.read_register(&RegisterType::IE))?;
         f.write_str("]")
     }
 }
@@ -63,90 +112,269 @@ impl RegisterFile {
         }
     }
 
-    fn dump_core(&self) {
-        println!("PC: {:#X} | SP: {:#X}", self.pc, self.sp);
-        println!("BC: {:#X} | DE: {:#X} | HL: {:#X}", self.get_bc(), self.get_de(), self.get_hl());
-        println!("A: {:#X} | F: {:#X} | IR: {:#X} | IE: {:#X}", self.a, self.f, self.ir, self.ie);
-    }
-
-    fn get_bc(&self) -> u16 {
-        ((self.b as u16) << 8) | (self.c as u16)
-    }
-
-    fn set_bc(&mut self, data: &u16) {
-        self.b = ((data >> 8) & 0xFF) as u8;
-        self.c = (data & 0xFF) as u8;
-    }
-
-    fn get_de(&self) -> u16 {
-        ((self.d as u16) << 8) | (self.e as u16)
-    }
-
-    fn set_de(&mut self, data: &u16) {
-        self.d = ((data >> 8) & 0xFF) as u8;
-        self.e = (data & 0xFF) as u8;
-    }    
-    
-    fn get_hl(&self) -> u16 {
-        ((self.h as u16) << 8) | (self.l as u16)
-    }
-
-    fn set_hl(&mut self, data: &u16) {
-        self.h = ((data >> 8) & 0xFF) as u8;
-        self.l = (data & 0xFF) as u8;
-    }
-
-    fn set_flag(&mut self, z: bool, n: bool, h: bool, c:bool) {
-        if z {
-            self.f |= 0x80;
-        } 
-        else {
-            self.f &= !0x80;
-        }
-
-
-        if n {
-            self.f |= 0x40;
-        } 
-        else {
-            self.f &= !0x40;
-        }
-
-
-        if h {
-            self.f |= 0x20;
-        } 
-        else {
-            self.f &= !0x20;
-        }
-
-
-        if c {
-            self.f |= 0x10;
-        } 
-        else {
-            self.f &= !0x10;
+    // General helper for 8-bit register access
+    fn get_8bit(&self, register: &RegisterType) -> u8 {
+        match register {
+            RegisterType::A => self.a,
+            RegisterType::F => self.f,
+            RegisterType::B => self.b,
+            RegisterType::C => self.c,
+            RegisterType::D => self.d,
+            RegisterType::E => self.e,
+            RegisterType::H => self.h,
+            RegisterType::L => self.l,
+            RegisterType::IR => self.ir,
+            RegisterType::IE => self.ie,
+            _ => panic!("Invalid 8-bit register: {:?}", register),
         }
     }
 
-    fn _reset_flag(&mut self, z: bool, n: bool, h: bool, c:bool ) {
-        if z {
-            self.f &= !0x80;
+    fn set_8bit(&mut self, register: &RegisterType, value: u8) {
+        match register {
+            RegisterType::A => self.a = value,
+            RegisterType::F => self.f = value,
+            RegisterType::B => self.b = value,
+            RegisterType::C => self.c = value,
+            RegisterType::D => self.d = value,
+            RegisterType::E => self.e = value,
+            RegisterType::H => self.h = value,
+            RegisterType::L => self.l = value,
+            RegisterType::IR => self.ir = value,
+            RegisterType::IE => self.ie = value,
+            _ => panic!("Invalid 8-bit register: {:?}", register),
         }
+    }
 
-        if n {
-            self.f &= !0x40;
+    // General helper for 16-bit register access
+    fn get_16bit(&self, register: &RegisterType) -> u16 {
+        match register {
+            RegisterType::PC => self.pc,
+            RegisterType::SP => self.sp,
+            RegisterType::AF => u16::from_be_bytes([self.a, self.f]),
+            RegisterType::BC => u16::from_be_bytes([self.b, self.c]),
+            RegisterType::DE => u16::from_be_bytes([self.d, self.e]),
+            RegisterType::HL => u16::from_be_bytes([self.h, self.l]),
+            _ => panic!("Invalid 16-bit register: {:?}", register),
         }
+    }
 
-        if h {
-            self.f &= !0x20;
+    fn set_16bit(&mut self, register: &RegisterType, value: u16) {
+        match register {
+            RegisterType::PC => self.pc = value,
+            RegisterType::SP => self.sp = value,
+            RegisterType::AF => {
+                let [high, low] = value.to_be_bytes();
+                self.a = high;
+                self.f = low;
+            }
+            RegisterType::BC => {
+                let [high, low] = value.to_be_bytes();
+                self.b = high;
+                self.c = low;
+            }
+            RegisterType::DE => {
+                let [high, low] = value.to_be_bytes();
+                self.d = high;
+                self.e = low;
+            }
+            RegisterType::HL => {
+                let [high, low] = value.to_be_bytes();
+                self.h = high;
+                self.l = low;
+            }
+            _ => panic!("Invalid 16-bit register: {:?}", register),
         }
+    }
 
-        if c {
-            self.f &= !0x10;
+    pub fn read_register(&self, register: &RegisterType) -> u16 {
+        match register {
+            // 8-bit registers
+            RegisterType::A
+            | RegisterType::F
+            | RegisterType::B
+            | RegisterType::C
+            | RegisterType::D
+            | RegisterType::E
+            | RegisterType::H
+            | RegisterType::L
+            | RegisterType::IR
+            | RegisterType::IE => {
+                self.get_8bit(register) as u16
+            }
+
+            // 16-bit registers
+            RegisterType::PC 
+            | RegisterType::SP 
+            | RegisterType::AF 
+            | RegisterType::BC 
+            | RegisterType::DE 
+            | RegisterType::HL => {
+                self.get_16bit(register)
+            }
         }
+    }
+
+    pub fn write_register(&mut self, register: &RegisterType, value: u16) {
+        match register {
+            // 8-bit registers
+            RegisterType::A
+            | RegisterType::F
+            | RegisterType::B
+            | RegisterType::C
+            | RegisterType::D
+            | RegisterType::E
+            | RegisterType::H
+            | RegisterType::L
+            | RegisterType::IR
+            | RegisterType::IE => {
+                self.set_8bit(register, value as u8)
+            }
+
+            // 16-bit registers
+            RegisterType::PC 
+            | RegisterType::SP 
+            | RegisterType::AF 
+            | RegisterType::BC 
+            | RegisterType::DE 
+            | RegisterType::HL => {
+                self.set_16bit(register, value)
+            }
+        }
+    }
+
+    pub fn modify_register<F>(&mut self, register: &RegisterType, f: F)
+    where
+        F: FnOnce(u16) -> u16,
+    {
+        let current_value = self.read_register(register);
+        let new_value = f(current_value);
+        self.write_register(register, new_value);
+    }
+
+    pub fn increment_reg(&mut self, reg: &RegisterType) {
+        match reg {
+            // 8-bit registers
+            RegisterType::A
+            | RegisterType::F
+            | RegisterType::B
+            | RegisterType::C
+            | RegisterType::D
+            | RegisterType::E
+            | RegisterType::H
+            | RegisterType::L
+            | RegisterType::IR
+            | RegisterType::IE => {
+                let value = self.get_8bit(reg).wrapping_add(1);
+                self.set_8bit(reg, value);
+            }
+
+            // 16-bit registers
+            RegisterType::PC | 
+            RegisterType::SP | 
+            RegisterType::AF | 
+            RegisterType::BC | 
+            RegisterType::DE | 
+            RegisterType::HL => {
+                let value = self.get_16bit(reg).wrapping_add(1);
+                self.set_16bit(reg, value);
+            }
+        }
+    }
+
+    pub fn decrement_reg(&mut self, reg: &RegisterType) {
+        match reg {
+            // 8-bit registers
+            RegisterType::A
+            | RegisterType::F
+            | RegisterType::B
+            | RegisterType::C
+            | RegisterType::D
+            | RegisterType::E
+            | RegisterType::H
+            | RegisterType::L
+            | RegisterType::IR
+            | RegisterType::IE => {
+                let value = self.get_8bit(reg).wrapping_sub(1);
+                self.set_8bit(reg, value);
+            }
+
+            // 16-bit registers
+            RegisterType::PC | 
+            RegisterType::SP | 
+            RegisterType::AF | 
+            RegisterType::BC | 
+            RegisterType::DE | 
+            RegisterType::HL => {
+                let value = self.get_16bit(reg).wrapping_sub(1);
+                self.set_16bit(reg, value);
+            }
+        }
+    }
+
+    fn set_register_bit(&mut self, register: RegisterType, bit: u8) {
+        match register {
+            RegisterType::A => self.a = bit_twiddling_utils::set_bit(self.a, bit),
+            RegisterType::F => self.f = bit_twiddling_utils::set_bit(self.f, bit),
+            RegisterType::IR => self.ir = bit_twiddling_utils::set_bit(self.ir, bit),
+            RegisterType::IE => self.ie = bit_twiddling_utils::set_bit(self.ie, bit),
+            _ => panic!("Bitwise operation 'set' not allowed on register: {:?}", register),
+        }
+    }
+
+    fn reset_register_bit(&mut self, register: RegisterType, bit: u8) {
+        match register {
+            RegisterType::A => self.a = bit_twiddling_utils::reset_bit(self.a, bit),
+            RegisterType::F => self.f = bit_twiddling_utils::reset_bit(self.f, bit),
+            RegisterType::IR => self.ir = bit_twiddling_utils::reset_bit(self.ir, bit),
+            RegisterType::IE => self.ie = bit_twiddling_utils::reset_bit(self.ie, bit),
+            _ => panic!("Bitwise operation 'reset' not allowed on register: {:?}", register),
+        }
+    }
+
+    fn is_register_bit_set(&self, register: RegisterType, bit: u8) -> bool {
+        match register {
+            RegisterType::A => bit_twiddling_utils::is_bit_set(self.a, bit),
+            RegisterType::F => bit_twiddling_utils::is_bit_set(self.f, bit),
+            RegisterType::IR => bit_twiddling_utils::is_bit_set(self.ir, bit),
+            RegisterType::IE => bit_twiddling_utils::is_bit_set(self.ie, bit),
+            _ => panic!("Bitwise check 'is_set' not allowed on register: {:?}", register),
+        }
+    }
+
+    pub fn set_flag(&mut self, flag: Flag) {
+        self.set_register_bit(RegisterType::F, flag as u8);
+    }
+
+    pub fn reset_flag(&mut self, flag: Flag) {
+        self.reset_register_bit(RegisterType::F, flag as u8);
+    }
+
+    pub fn is_flag_set(&self, flag: Flag) -> bool {
+        self.is_register_bit_set(RegisterType::F, flag as u8)
+    }
+
+    pub fn enable_interrupt(&mut self, interrupt: Interrupt) {
+        self.set_register_bit(RegisterType::IE, interrupt as u8);
+    }
+
+    pub fn disable_interrupt(&mut self, interrupt: Interrupt) {
+        self.reset_register_bit(RegisterType::IE, interrupt as u8);
+    }
+
+    pub fn is_interrupt_enabled(&self, interrupt: Interrupt) -> bool {
+        self.is_register_bit_set(RegisterType::IE, interrupt as u8)
     }
 }
+
+
+
+
+
+
+
+
+
+
 #[derive(Clone)]
 struct Memory {
     rom_bank_0:                 [u8; 0x4000],   // 16KB
@@ -213,12 +441,20 @@ impl Memory {
         }
     }
 
-    fn _dump(&self, range: (u16, u16)) {
+    fn dump(&self, range: (u16, u16)) {
         for address in range.0..=range.1 {
             println!("[{:#x}]: {:#x}", address, self.read(address));
         }
     }
 }
+
+
+
+
+
+
+
+
 
 #[derive(Clone)]
 struct CPU {
@@ -237,55 +473,19 @@ impl CPU {
     fn log(&self, message: &str) {
         println!("{:<015} | PC: {:#^04X} | IR: {:#^02X} | mem[PC]: {:#X}", 
             message,
-            self.register_file.pc, 
-            self.register_file.ir, 
-            self.memory.read(self.register_file.pc)
+            self.register_file.read_register(&RegisterType::PC), 
+            self.register_file.read_register(&RegisterType::IR), 
+            self.memory.read(self.register_file.read_register(&RegisterType::PC))
         );
     }
-
-    fn render_cards(&self, ui: &mut eframe::egui::Ui) {
-   
-        const PADDING: f32 = 5.0;
-        ui.add_space(PADDING);
-
-        let title = format!(" BLAHHH");
-        const WHITE: Color32 = Color32::from_rgb(255, 255, 255);
-        ui.colored_label(WHITE, title);
-
-        ui.add_space(PADDING);
-        let desc = Label::new(self.register_file.clone()).text_style(eframe::egui::TextStyle::Button);
-        ui.add(desc);
-
-            
-        
-    }
 }
 
-impl App for CPU {
-    fn setup(
-        &mut self,
-        _ctx: &eframe::egui::CtxRef,
-        _frame: &mut eframe::epi::Frame<'_>,
-        _storage: Option<&dyn eframe::epi::Storage>,
-    ) {
-        
-    }
 
-    fn update(
-        &mut self, 
-        ctx: &eframe::egui::CtxRef, 
-        _frame: &mut eframe::epi::Frame<'_>) {
-        CentralPanel::default().show(ctx, |ui| {
-            ScrollArea::auto_sized().show(ui, |ui| {
-                self.render_cards(ui);
-            });
-        });
-    }
 
-    fn name(&self) -> &str {
-        "headlines"
-    }
-}
+
+
+
+
 
 /*--------------------------------------------
 Things I could do:
@@ -296,26 +496,12 @@ Things I could do:
 --------------------------------------------*/
 // GUI Code
 fn main() {
-    //let args: Vec<String> = env::args().collect();
     let log: bool = false;
-    //if args[1] == "l" {
-        //log = true
-    //}
-
-    
     let mut cpu = CPU::new();
-    //let mut native_options = NativeOptions::default();
-    //native_options.initial_window_size = Some(Vec2::new(540., 960.));
-    //run_native(Box::new(cpu.clone()), native_options);
 
-
-    let path = Path::new("/Users/thales/Documents/GitHub/fragile-canvas/ROMs/DMG_ROM.bin");
-    //let path = Path::new("/home/thale/scratch/Tetris (USA) (Rev-A).gb");
-    let display = path.display();
-    // println!("{}", display);
-
+    let path = Path::new("/Users/thales/Documents/fragile-canvas/ROMs/DMG_ROM.bin");
     let mut file = match File::open(&path) {
-        Err(why) => panic!("couldn't open {}: {}", display, why),
+        Err(why) => panic!("couldn't open {}: {}", path.display(), why),
         Ok(file) => file,
     };
 
@@ -325,15 +511,20 @@ fn main() {
             if bytes_read == 0 {
                 break;
             }
-            // println!("{:#X}", buffer[0]);
             cpu.memory.load_rom(address, buffer[0]);
         }
     }
-
-    cpu.register_file.ir = cpu.memory.read(cpu.register_file.pc);
-    cpu.register_file.pc = cpu.register_file.pc + 1;
     
-    for _ in 0x00..=0x03 {
+    let _current_instruction = cpu.memory.read(
+        cpu.register_file.read_register(&RegisterType::PC));
+
+    cpu.register_file.increment_reg(&RegisterType::PC);
+
+    cpu.register_file.is_flag_set(Flag::HalfCarry);
+    //cpu.memory.dump((0x0000, 0x0100));
+    println!("{}", cpu.register_file);
+
+    /* for _ in 0x00..=0x03 {
         //  CB-prefixed instructions
         if cpu.register_file.ir == 0xCB {
             cpu.register_file.pc = cpu.register_file.pc + 1;
@@ -342,9 +533,7 @@ fn main() {
 
         }
         if cpu.register_file.ir == 0x31 {
-            if log {
-                cpu.log("LD SP, nn");
-            }
+            if log { cpu.log("LD SP, nn"); }
             
             let nn_lsb: u8 = cpu.memory.read(cpu.register_file.pc);
             cpu.register_file.pc = cpu.register_file.pc + 1;
@@ -393,10 +582,16 @@ fn main() {
         }
 
         cpu.register_file.ir = cpu.memory.read(cpu.register_file.pc);
-    }
-    cpu.register_file.dump_core();
+    } */
+    //cpu.register_file.dump_core();
     //cpu.memory.dump((0x0000, 0x0103));
 }
+
+
+
+
+
+
 
 
 #[cfg(test)]
@@ -417,34 +612,18 @@ mod integration_tests {
             let bc_addr_data = rng.gen_range(0x8000..=0x9FFF); 
             let de_addr_data = rng.gen_range(0xA000..=0xBFFF);
             let hl_addr_data = rng.gen_range(0xC000..=0xDFFF);
-
-            // println!("bc_addr_data: {:#X}", bc_addr_data);
-            // println!("de_addr_data: {:#X}", de_addr_data);
-            // println!("hl_addr_data: {:#X}", hl_addr_data);
-
-            cpu.register_file.set_bc(&bc_addr_data);
-            cpu.register_file.set_de(&de_addr_data);
-            cpu.register_file.set_hl(&hl_addr_data);
-
-            // println!("bc_reg_dump: {:#X}", cpu.register_file.get_bc());
-            // println!("de_reg_dump: {:#X}", cpu.register_file.get_de());
-            // println!("hl_reg_dump: {:#X}", cpu.register_file.get_hl());
+            
+            cpu.register_file.write_register(&RegisterType::BC, bc_addr_data);
+            cpu.register_file.write_register(&RegisterType::DE, de_addr_data);
+            cpu.register_file.write_register(&RegisterType::HL, hl_addr_data);
 
             let bc_memory_dummy = rng.gen_range(0x00..0xFF); 
             let de_memory_dummy = rng.gen_range(0x00..0xFF);
             let hl_memory_dummy = rng.gen_range(0x00..0xFF);
 
-            // println!("bc_memory_dummy: {:#X}", bc_memory_dummy);
-            // println!("de_memory_dummy: {:#X}", de_memory_dummy);
-            // println!("hl_memory_dummy: {:#X}", hl_memory_dummy);
-
-            cpu.memory.write(cpu.register_file.get_bc(), bc_memory_dummy);
-            cpu.memory.write(cpu.register_file.get_de(), de_memory_dummy);
-            cpu.memory.write(cpu.register_file.get_hl(), hl_memory_dummy);
-
-            // println!("bc_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_bc(), cpu.memory.read(bc_addr_data));
-            // println!("de_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_de(), cpu.memory.read(de_addr_data));
-            // println!("hl_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_hl(), cpu.memory.read(hl_addr_data));
+            cpu.memory.write(cpu.register_file.read_register(&RegisterType::BC), bc_memory_dummy);
+            cpu.memory.write(cpu.register_file.read_register(&RegisterType::DE), de_memory_dummy);
+            cpu.memory.write(cpu.register_file.read_register(&RegisterType::HL), hl_memory_dummy);
             
             assert_eq!(cpu.memory.read(bc_addr_data), bc_memory_dummy, "Register BC failed integration test...");
             assert_eq!(cpu.memory.read(de_addr_data), de_memory_dummy, "Register DE failed integration test...");
@@ -498,21 +677,21 @@ mod integration_tests {
         let filtered_de = ((filtered_d as u16) << 8) | (filtered_e as u16);
         let filtered_hl = ((filtered_h as u16) << 8) | (filtered_l as u16);
 
-        assert_eq!(cpu.register_file.get_bc(), filtered_bc, "Register BC failed write testing...");
-        assert_eq!(cpu.register_file.get_de(), filtered_de, "Register DE failed write testing...");
-        assert_eq!(cpu.register_file.get_hl(), filtered_hl, "Register HL failed write testing...");
+        assert_eq!(cpu.register_file.read_register(&RegisterType::BC), filtered_bc, "Register BC failed write testing...");
+        assert_eq!(cpu.register_file.read_register(&RegisterType::DE), filtered_de, "Register DE failed write testing...");
+        assert_eq!(cpu.register_file.read_register(&RegisterType::HL), filtered_hl, "Register HL failed write testing...");
 
         let bc_memory_dummy0 = rng.gen_range(0x00..0xFF); 
         let de_memory_dummy0 = rng.gen_range(0x00..0xFF);
         let hl_memory_dummy0 = rng.gen_range(0x00..0xFF);
 
-        cpu.memory.write(cpu.register_file.get_bc(), bc_memory_dummy0);
-        cpu.memory.write(cpu.register_file.get_de(), de_memory_dummy0);
-        cpu.memory.write(cpu.register_file.get_hl(), hl_memory_dummy0);
+        cpu.memory.write(cpu.register_file.read_register(&RegisterType::BC), bc_memory_dummy0);
+        cpu.memory.write(cpu.register_file.read_register(&RegisterType::DE), de_memory_dummy0);
+        cpu.memory.write(cpu.register_file.read_register(&RegisterType::HL), hl_memory_dummy0);
 
-        println!("b+c_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_bc(), cpu.memory.read(filtered_bc));
-        println!("d+e_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_de(), cpu.memory.read(filtered_de));
-        println!("h+l_test | memory dump [{:#X}]: {:#X}", cpu.register_file.get_hl(), cpu.memory.read(filtered_hl));
+        println!("b+c_test | memory dump [{:#X}]: {:#X}", cpu.register_file.read_register(&RegisterType::BC), cpu.memory.read(filtered_bc));
+        println!("d+e_test | memory dump [{:#X}]: {:#X}", cpu.register_file.read_register(&RegisterType::DE), cpu.memory.read(filtered_de));
+        println!("h+l_test | memory dump [{:#X}]: {:#X}", cpu.register_file.read_register(&RegisterType::HL), cpu.memory.read(filtered_hl));
 
         assert_eq!(cpu.memory.read(filtered_bc), bc_memory_dummy0, "Register B+C failed integration test...");
         assert_eq!(cpu.memory.read(filtered_de), de_memory_dummy0, "Register D+E failed integration test...");

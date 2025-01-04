@@ -1,0 +1,5 @@
+/Users/thales/Documents/fragile-canvas/sm83/target/debug/deps/libblock-6933e866a544be23.rmeta: /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/block-0.1.6/src/lib.rs
+
+/Users/thales/Documents/fragile-canvas/sm83/target/debug/deps/block-6933e866a544be23.d: /Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/block-0.1.6/src/lib.rs
+
+/Users/thales/.cargo/registry/src/index.crates.io-6f17d22bba15001f/block-0.1.6/src/lib.rs:
