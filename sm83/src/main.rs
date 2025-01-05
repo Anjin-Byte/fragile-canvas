@@ -23,10 +23,10 @@ pub mod bit_twiddling_utils {
 
 #[derive(Debug, Clone)]
 enum RegisterType {
-    PC,
-    SP,
-    A,
-    F,
+    PC, // Program Counter
+    SP, // Stack Pointer
+    A,  // Accumulator
+    F,  // Flag 
     B,
     C,
     D,
@@ -37,8 +37,8 @@ enum RegisterType {
     BC,
     DE,
     HL,
-    IR,
-    IE,
+    IR, // Instruction Register
+    IE, // Interrupt Enable
 }
 
 pub enum Flag {
@@ -455,6 +455,50 @@ impl Memory {
 
 
 
+pub struct Instruction {
+    pub opcode: u8,            // Main opcode
+    pub length: usize,         // Instruction length in bytes
+    // this is a CISC instruction set so gb instructions
+    // have a variable size
+    pub cycles: usize,         // Cycles required for execution
+    pub addressing_mode: AddressingMode,
+    /*
+    Addressing_mode will specify how the contents of 
+    operands should be interpreted.
+    */
+    pub operands: Vec<u8>,     // Operands (immediate or memory)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AddressingMode {
+    Immediate, // value inlined
+    Direct, 
+    // instruction specifies a memory address where the operand is located
+    Indirect, 
+    // instruction specifies a register containing the memory address of the operand.
+    Indexed,
+    Register,
+    // operand is a value in a CPU register.
+    Relative,
+    Implied,
+    StackBased,
+    Other,
+}
+
+#[derive(Debug)]
+pub struct DecodedInstruction {
+    pub operation: Operation,
+    pub addressing_mode: AddressingMode,
+    pub operands: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum Operation {
+    NOP,
+    LOAD,
+    ADD,
+    SUB,
+}
 
 #[derive(Clone)]
 struct CPU {
@@ -468,6 +512,91 @@ impl CPU {
             register_file: RegisterFile::new(),
             memory: Memory::new(),
         }
+    }
+
+    /*
+    According to: https://gist.github.com/SonoSooS/c0055300670d678b5ae8433e20bea595#jp-hl
+    "...instruction fetching is just LD IR, (PC+),.."
+    If this is true, my logic in fetch method should be more like this:
+
+    let address: u16 = self.register_file.read_register(&RegisterType::PC) + 1;
+    let opcode: u8 = self.memory.read(address);
+    self.register_file.write_register(&RegisterType::IR, opcode as u16);
+    */
+    // 
+    pub fn fetch_instruction(&mut self) -> Instruction {
+        let opcode = self.memory.read(self.register_file.read_register(&RegisterType::PC));
+        self.register_file.increment_reg(&RegisterType::PC);
+
+        // Decode the instruction (simplified for illustration)
+        match opcode {
+            0x00 => Instruction {
+                opcode,
+                length: 1,
+                cycles: 4,
+                addressing_mode: AddressingMode::Register,
+                operands: vec![],
+            },
+            0x01 => {
+                let low = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+
+                let high = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+    
+                Instruction {
+                    opcode,
+                    length: 3,
+                    cycles: 12,
+                    addressing_mode: AddressingMode::Direct,
+                    operands: vec![low, high],
+                }
+            }
+            _ => panic!("Unknown opcode: {:02X}", opcode),
+        }
+    }
+
+    pub fn decode_instruction(&self, instr: &Instruction) -> DecodedInstruction {
+        match instr.opcode {
+            0x00 => DecodedInstruction {
+                operation: Operation::NOP,
+                addressing_mode: instr.addressing_mode,
+                operands: instr.operands.clone(),
+            },
+            0x01 => DecodedInstruction {
+                operation: Operation::LOAD,
+                addressing_mode: instr.addressing_mode,
+                operands: instr.operands.clone(),
+            },
+            _ => panic!("Unknown opcode: {:02X}", instr.opcode),
+        }
+    }
+
+    pub fn execute_instruction(&mut self, instr: DecodedInstruction) {
+        match instr.operation {
+            Operation::NOP => { /* Do nothing */ }
+            Operation::LOAD => {
+                if let AddressingMode::Direct = instr.addressing_mode {
+                    let address = u16::from_le_bytes([instr.operands[0], instr.operands[1]]);
+                    let value: u16 = self.memory.read(address) as u16;
+                    self.register_file.write_register(&RegisterType::A, value);
+                }
+            }
+            _ => panic!("Unimplemented operation: {:?}", instr.operation),
+        }
+    }
+
+    pub fn tick(&mut self) {
+        // Fetch
+        let raw_instr = self.fetch_instruction();
+
+        // Decode
+        let decoded_instr = self.decode_instruction(&raw_instr);
+
+        // Execute
+        self.execute_instruction(decoded_instr);
     }
 
     fn log(&self, message: &str) {
@@ -487,10 +616,14 @@ impl CPU {
 
 
 
+
+
+
+
 /*--------------------------------------------
 Things I could do:
     1. Work on boot ROM functionality
-    2. Implement flag register
+    2. Implement flag register X
     3. Simple bank switching logic...if such a thing exists..?
     4. Create fetch_cycle routine 
 --------------------------------------------*/
@@ -515,13 +648,11 @@ fn main() {
         }
     }
     
-    let _current_instruction = cpu.memory.read(
-        cpu.register_file.read_register(&RegisterType::PC));
-
-    cpu.register_file.increment_reg(&RegisterType::PC);
-
-    cpu.register_file.is_flag_set(Flag::HalfCarry);
-    //cpu.memory.dump((0x0000, 0x0100));
+    cpu.tick();
+    println!("{}", cpu.register_file);
+    cpu.tick();
+    println!("{}", cpu.register_file);
+    cpu.tick();
     println!("{}", cpu.register_file);
 
     /* for _ in 0x00..=0x03 {
