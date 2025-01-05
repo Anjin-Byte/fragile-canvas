@@ -1,1 +1,1 @@
-# Gameboy CPU Emulator
+# ms83 core emulation

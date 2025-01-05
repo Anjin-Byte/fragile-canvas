@@ -498,6 +498,7 @@ pub enum Operation {
     LOAD,
     ADD,
     SUB,
+    XOR,
 }
 
 #[derive(Clone)]
@@ -538,6 +539,11 @@ impl CPU {
                 operands: vec![],
             },
             0x01 => {
+                /*
+                Fetching d16(immediate 16 bit data) is
+                a good example of what could be considered
+                micro-code.
+                 */
                 let low = self.memory.read(
                     self.register_file.read_register(&RegisterType::PC));
                 self.register_file.increment_reg(&RegisterType::PC);
@@ -553,6 +559,49 @@ impl CPU {
                     addressing_mode: AddressingMode::Direct,
                     operands: vec![low, high],
                 }
+            },
+            0x31 => {
+                let low = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+
+                let high = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+    
+                Instruction {
+                    opcode,
+                    length: 3,
+                    cycles: 12,
+                    addressing_mode: AddressingMode::Immediate,
+                    operands: vec![low, high],
+                }
+            },
+            0xAF => {// toggles Z flag
+                Instruction {
+                    opcode,
+                    length: 1,
+                    cycles: 4,
+                    addressing_mode: AddressingMode::Register,
+                    operands: vec![opcode],
+                }
+            },
+            0x21 => {
+                let low = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+
+                let high = self.memory.read(
+                    self.register_file.read_register(&RegisterType::PC));
+                self.register_file.increment_reg(&RegisterType::PC);
+
+                Instruction {
+                    opcode,
+                    length: 3,
+                    cycles: 12,
+                    addressing_mode: AddressingMode::Immediate,
+                    operands: vec![low, high],
+                }
             }
             _ => panic!("Unknown opcode: {:02X}", opcode),
         }
@@ -561,11 +610,26 @@ impl CPU {
     pub fn decode_instruction(&self, instr: &Instruction) -> DecodedInstruction {
         match instr.opcode {
             0x00 => DecodedInstruction {
-                operation: Operation::NOP,
+                operation: Operation::NOP, // stage 1
+                addressing_mode: instr.addressing_mode, // stage 2
+                operands: instr.operands.clone(), // stage3
+            },
+            0x01 => DecodedInstruction {
+                operation: Operation::LOAD,
                 addressing_mode: instr.addressing_mode,
                 operands: instr.operands.clone(),
             },
-            0x01 => DecodedInstruction {
+            0x31 => DecodedInstruction {
+                operation: Operation::LOAD,
+                addressing_mode: instr.addressing_mode,
+                operands: instr.operands.clone(),
+            },
+            0xAF => DecodedInstruction {
+                operation: Operation::XOR,
+                addressing_mode: instr.addressing_mode,
+                operands: instr.operands.clone(),
+            },
+            0x21 => DecodedInstruction {
                 operation: Operation::LOAD,
                 addressing_mode: instr.addressing_mode,
                 operands: instr.operands.clone(),
@@ -581,6 +645,29 @@ impl CPU {
                 if let AddressingMode::Direct = instr.addressing_mode {
                     let address = u16::from_le_bytes([instr.operands[0], instr.operands[1]]);
                     let value: u16 = self.memory.read(address) as u16;
+                    self.register_file.write_register(&RegisterType::A, value);
+                }
+                if let AddressingMode::Immediate = instr.addressing_mode {
+                    let value = u16::from_le_bytes([instr.operands[0], instr.operands[1]]);
+                    self.register_file.write_register(&RegisterType::SP, value);
+                }
+            }
+            Operation::XOR => {
+                if let AddressingMode::Register = instr.addressing_mode {
+                    // This is bulky, should be packaged somewhere else
+                    let register_type = match instr.operands[0] & 0b111 {
+                        0b000 => RegisterType::B,
+                        0b001 => RegisterType::C,
+                        0b010 => RegisterType::D,
+                        0b011 => RegisterType::E,
+                        0b100 => RegisterType::H,
+                        0b101 => RegisterType::L,
+                        0b111 => RegisterType::A,
+                        _ => panic!("Invalid source register"),
+                    };
+
+                    let operand_value: u16 = self.register_file.read_register(&register_type);
+                    let value: u16 = self.register_file.read_register(&RegisterType::A) ^ operand_value;
                     self.register_file.write_register(&RegisterType::A, value);
                 }
             }
@@ -632,7 +719,7 @@ fn main() {
     let log: bool = false;
     let mut cpu = CPU::new();
 
-    let path = Path::new("/Users/thales/Documents/fragile-canvas/ROMs/DMG_ROM.bin");
+    let path = Path::new("../ROMs/DMG_ROM.bin");
     let mut file = match File::open(&path) {
         Err(why) => panic!("couldn't open {}: {}", path.display(), why),
         Ok(file) => file,
