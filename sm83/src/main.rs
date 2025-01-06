@@ -22,7 +22,7 @@ pub mod bit_twiddling_utils {
 }
 
 #[derive(Debug, Clone)]
-enum RegisterType {
+pub enum RegisterType {
     PC, // Program Counter
     SP, // Stack Pointer
     A,  // Accumulator
@@ -41,6 +41,7 @@ enum RegisterType {
     IE, // Interrupt Enable
 }
 
+#[derive(Debug)]
 pub enum Flag {
     Zero = 7,
     Subtract = 6,
@@ -486,10 +487,19 @@ pub enum AddressingMode {
 }
 
 #[derive(Debug)]
+pub enum Operand {
+    ImmediateU8(u8),          // 8-bit immediate value
+    ImmediateU16(u16),        // 16-bit immediate value
+    Register(RegisterType),   // Register operand
+    MemoryAddress(u16),       // Memory address
+    Flags(Flag),              // Enum type for flags
+}
+
+#[derive(Debug)]
 pub struct DecodedInstruction {
     pub operation: Operation,
     pub addressing_mode: AddressingMode,
-    pub operands: Vec<u8>,
+    pub operands: Vec<Operand>,
 }
 
 #[derive(Debug)]
@@ -499,6 +509,12 @@ pub enum Operation {
     ADD,
     SUB,
     XOR,
+    CALL,
+    RET,
+    INC,
+    DEC,
+    JUMP,
+    BIT,
 }
 
 #[derive(Clone)]
@@ -529,7 +545,6 @@ impl CPU {
         let opcode = self.memory.read(self.register_file.read_register(&RegisterType::PC));
         self.register_file.increment_reg(&RegisterType::PC);
 
-        // Decode the instruction (simplified for illustration)
         match opcode {
             0x00 => Instruction {
                 opcode,
@@ -647,6 +662,7 @@ impl CPU {
                     let value: u16 = self.memory.read(address) as u16;
                     self.register_file.write_register(&RegisterType::A, value);
                 }
+                /* This logic cannot be hard coded to a specific register */
                 if let AddressingMode::Immediate = instr.addressing_mode {
                     let value = u16::from_le_bytes([instr.operands[0], instr.operands[1]]);
                     self.register_file.write_register(&RegisterType::SP, value);
@@ -675,6 +691,8 @@ impl CPU {
         }
     }
 
+    pub fn handle_interrupt(&mut self) { }
+
     pub fn tick(&mut self) {
         // Fetch
         let raw_instr = self.fetch_instruction();
@@ -684,6 +702,12 @@ impl CPU {
 
         // Execute
         self.execute_instruction(decoded_instr);
+
+        /*
+        Interrupts are typically checked after the execution phase of 
+        an instruction, before fetching the next instruction.
+         */
+        self.handle_interrupt();
     }
 
     fn log(&self, message: &str) {
@@ -714,7 +738,6 @@ Things I could do:
     3. Simple bank switching logic...if such a thing exists..?
     4. Create fetch_cycle routine 
 --------------------------------------------*/
-// GUI Code
 fn main() {
     let log: bool = false;
     let mut cpu = CPU::new();
@@ -734,7 +757,7 @@ fn main() {
             cpu.memory.load_rom(address, buffer[0]);
         }
     }
-    
+
     cpu.tick();
     println!("{}", cpu.register_file);
     cpu.tick();
