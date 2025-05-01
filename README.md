@@ -28,18 +28,6 @@ This project is a work-in-progress **Game Boy CPU emulator**, written in **pure 
 - 🧠 **Educational architecture**: Build understanding of low-level CPU execution (microcode, flags, interrupt handling)
 ---
 
-## 📦 Getting Started
-
-To run the CPU loop with a sample ROM:
-
-```bash
-cargo run
-```
-
-The entry point is `main.rs`, which loads a small program into memory and ticks the CPU.
-
----
-
 ## ✨ License
 
 MIT
