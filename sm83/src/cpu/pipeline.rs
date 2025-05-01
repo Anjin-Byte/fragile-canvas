@@ -35,12 +35,11 @@ pub fn pipeline(cpu: &mut CPU) {
             if let Some(op) = ops.pop_front() {
                 crate::cpu::microcode::execute_microop(cpu, op);
             } else {
-                // e.g., cpu.interrupts.ime = true;
+                // cpu.interrupts.ime = true;
                 cpu.state = PipelineState::Fetch;
             }
         }
         PipelineState::Halted => {
-            // HALT handling; may wake on interrupt
         }
     }
 }

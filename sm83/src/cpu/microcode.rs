@@ -1,6 +1,6 @@
 use crate::cpu::CPU;
 
-use super::registers::{Reg8, Reg16, Flag};
+use super::{alu::alu, registers::{Flag, Reg16, Reg8}};
 
 mod cycles {
     const CYCLES_LOOKUP: [u8; 256] = [
@@ -91,7 +91,21 @@ pub fn execute_microop(cpu: &mut CPU, op: MicroOp) {
         MicroOp::WriteMem { addr, val } => todo!(),
         MicroOp::ReadMemReg { addr_reg } => todo!(),
         MicroOp::WriteMemReg { addr_reg, val } => todo!(),
-        MicroOp::AluOp { kind, lhs, rhs } => todo!(),
+        MicroOp::AluOp { kind, lhs, rhs } => {
+            let a = cpu.register_file.get_8bit(&lhs);
+            let b = match rhs {
+              Operand8::Reg(r) => cpu.register_file.get_8bit(&r),
+              Operand8::Imm(i)  => i,
+            };
+
+            let res = alu(kind, a, b);
+            cpu.register_file.set_8bit(&lhs, res.value);
+
+            cpu.register_file.write_flag(Flag::Zero,      res.z);
+            cpu.register_file.write_flag(Flag::Subtract,  res.n);
+            cpu.register_file.write_flag(Flag::HalfCarry, res.h);
+            cpu.register_file.write_flag(Flag::Carry,     res.c);
+        }
         MicroOp::SetFlag { flag, value } => todo!(),
         MicroOp::UpdateFlags { result, kind } => todo!(),
         MicroOp::PushStack16 { src } => todo!(),

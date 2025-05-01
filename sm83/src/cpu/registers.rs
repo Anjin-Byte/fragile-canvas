@@ -205,6 +205,14 @@ impl RegisterFile {
         }
     }
 
+    pub fn write_flag(&mut self, flag: Flag, set: bool) {
+        if set {
+            self.set_flag(flag);
+        } else {
+            self.reset_flag(flag);
+        }
+    }
+
     pub fn set_flag(&mut self, flag: Flag) {
         self.set_register_bit(Reg8::F, flag as u8);
     }
