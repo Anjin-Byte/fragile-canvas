@@ -8,10 +8,10 @@ use crate::utils::bit_twiddling::{
 
 use super::interrupts::Interrupt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reg8 { A, F, B, C, D, E, H, L, IR, IE, }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reg16 { PC, SP, AF, BC, DE, HL, }
 
 #[derive(Debug)]
