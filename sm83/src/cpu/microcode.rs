@@ -178,7 +178,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             // Fetch the current PC value
             let pc = cpu.register_file.get_16bit(&Reg16::PC);
             // Read the low byte from memory at [PC]
-            let lo = cpu.bus.borrow_mut().read(pc); // Memory read via Bus :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+            let lo = cpu.bus.borrow_mut().read(pc); // Memory read via Bus 
             // Increment PC to point to the high byte
             cpu.register_file.inc16(&Reg16::PC);
             // Read the high byte from memory at the new PC
@@ -208,24 +208,24 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             // Here we borrow the bus and read one byte at the given 16-bit address.
             let value: u8 = cpu.bus
                 .borrow_mut() // borrow the shared Bus
-                .read(addr);  // read at absolute address `addr` :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+                .read(addr);  // read at absolute address `addr`
             // Write the result into the target CPU register:
             // The RegisterFile handles writing into one of A, B, C, D, E, H, L, IR, IE, or F.
             cpu.register_file
-                .set_8bit(&into, value);  // set register `into` = `value` :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+                .set_8bit(&into, value);  // set register `into` = `value`
         },
         MicroOp::ReadHighPage { offset, into } => {
             // Read the 8-bit offset from the specified register.
             // This value n comes from the instruction operand (immediate or register C).
-            let off_val: u16 = cpu.register_file.get_8bit(&offset) as u16;  // :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
+            let off_val: u16 = cpu.register_file.get_8bit(&offset) as u16;  
             // Form the full 16-bit address by adding the high-page base (0xFF00).
             // All I/O registers and High RAM live at 0xFF00 + n.
             let addr: u16 = 0xFF00_u16.wrapping_add(off_val);
             // Perform the memory read via the shared bus.
             // `read` takes an absolute Game Boy address and returns the byte stored there.
-            let value: u8 = cpu.bus.borrow_mut().read(addr);                  // :contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+            let value: u8 = cpu.bus.borrow_mut().read(addr);                  
             // Write the fetched byte back into the target 8-bit CPU register.
-            cpu.register_file.set_8bit(&into, value);                        // :contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
+            cpu.register_file.set_8bit(&into, value);                        
         },
         MicroOp::WriteMemReg8 { addr_reg, src } => {
             // Read the target 16-bit address from the given register pair (e.g. BC, DE, or HL)
@@ -247,16 +247,16 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
         MicroOp::WriteHighPage { offset, src } => {
             // Read the 8-bit offset value from the specified register.
             // This comes from, e.g., the operand in an instruction like LD (0xFF00+R), R′.
-            let offset_val: u8 = cpu.register_file.get_8bit(&offset);              // :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+            let offset_val: u8 = cpu.register_file.get_8bit(&offset);              
             // Compute the target address in the “high page” (0xFF00–0xFFFF).
             // The Game Boy maps 0xFF00–0xFF7F to I/O registers and 0xFF80–0xFFFE to high RAM.
             // Wrapping_add is safe here because offset_val is 0–0xFF.
-            let addr: u16 = 0xFF00u16.wrapping_add(offset_val as u16);            // :contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}  
+            let addr: u16 = 0xFF00u16.wrapping_add(offset_val as u16);              
             // Read the byte to store from the source register.
-            let value: u8 = cpu.register_file.get_8bit(&src);                     // :contentReference[oaicite:4]{index=4}:contentReference[oaicite:5]{index=5}
+            let value: u8 = cpu.register_file.get_8bit(&src);                     
             // Perform the memory write via the shared Bus (MMU).
             // The bus implements address dispatching (ROM, VRAM, I/O, etc.).
-            cpu.bus.borrow_mut().write(addr, value);                              // :contentReference[oaicite:6]{index=6}:contentReference[oaicite:7]{index=7}
+            cpu.bus.borrow_mut().write(addr, value);                              
         },
 
         // Stack Operations -------------------------------------------------------------
@@ -325,12 +325,87 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             if c { f |= FLAG_C; }
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
-        MicroOp::Daa                         => todo!(),
-        MicroOp::Cpl                         => todo!(),
-        MicroOp::Scf                         => todo!(),
-        MicroOp::Ccf                         => todo!(),
-        MicroOp::Inc8 { target }             => todo!(),
-        MicroOp::Dec8 { target }             => todo!(),
+        MicroOp::Daa => {
+            let mut a = cpu.register_file.get_8bit(&Reg8::A);
+            let flags = cpu.register_file.get_8bit(&Reg8::F);
+            let n = flags & FLAG_N != 0;
+            let h = flags & FLAG_H != 0;
+            let c = flags & FLAG_C != 0;
+            let mut adj = 0;
+            let mut new_c = c;
+        
+            if !n {
+                // after addition: maybe add 0x06 to low nibble, 0x60 to high
+                if h || (a & 0x0F) > 9 { adj |= 0x06; }
+                if c || a > 0x99   { adj |= 0x60; new_c = true; }
+                a = a.wrapping_add(adj);
+            } else {
+                // after subtraction: subtract adjustments
+                if h { adj |= 0x06; }
+                if c { adj |= 0x60; }
+                a = a.wrapping_sub(adj);
+            }
+        
+            // Write adjusted A
+            cpu.register_file.set_8bit(&Reg8::A, a);
+            // Rebuild F: Z from result, N unchanged, H=0, C=new_c
+            let mut f = 0;
+            if a == 0      { f |= FLAG_Z; }
+            if n           { f |= FLAG_N; }
+            if new_c       { f |= FLAG_C; }
+            cpu.register_file.set_8bit(&Reg8::F, f);
+        },        
+        MicroOp::Cpl => {
+            // A ← ¬A
+            let a = cpu.register_file.get_8bit(&Reg8::A);
+            cpu.register_file.set_8bit(&Reg8::A, !a);
+            // N=1, H=1, preserve Z and C
+            let prev = cpu.register_file.get_8bit(&Reg8::F);
+            let newf = (prev & (FLAG_Z | FLAG_C)) | FLAG_N | FLAG_H;
+            cpu.register_file.set_8bit(&Reg8::F, newf);
+        },
+        MicroOp::Scf => {
+            // C=1, N=0, H=0, preserve Z
+            let prev_z = cpu.register_file.get_8bit(&Reg8::F) & FLAG_Z;
+            cpu.register_file.set_8bit(&Reg8::F, prev_z | FLAG_C);
+        },
+        MicroOp::Ccf => {
+            // C ← ¬C, N=0, H=0, preserve Z
+            let prev = cpu.register_file.get_8bit(&Reg8::F);
+            let prev_z = prev & FLAG_Z;
+            let new_c = if prev & FLAG_C == 0 { FLAG_C } else { 0 };
+            cpu.register_file.set_8bit(&Reg8::F, prev_z | new_c);
+        },        
+        MicroOp::Inc8 { target } => {
+            // Read & increment
+            let (reg, old) = match target {
+                Operand8::Reg(r) => (r, cpu.register_file.get_8bit(&r)),
+                _ => panic!("Inc8 only supports register targets"),
+            };
+            let res = old.wrapping_add(1);
+            cpu.register_file.set_8bit(&reg, res);
+            // Flags: Z, H half-carry, N=0, keep old C
+            let oldf = cpu.register_file.get_8bit(&Reg8::F) & FLAG_C;
+            let mut f = oldf;
+            if res == 0            { f |= FLAG_Z; }
+            if ((old & 0x0F) + 1) > 0x0F { f |= FLAG_H; }
+            cpu.register_file.set_8bit(&Reg8::F, f);
+        },
+        MicroOp::Dec8 { target } => {
+            // Read & decrement
+            let (reg, old) = match target {
+                Operand8::Reg(r) => (r, cpu.register_file.get_8bit(&r)),
+                _ => panic!("Dec8 only supports register targets"),
+            };
+            let res = old.wrapping_sub(1);
+            cpu.register_file.set_8bit(&reg, res);
+            // Flags: Z, H (borrow from bit4), N=1, keep old C
+            let oldf = cpu.register_file.get_8bit(&Reg8::F) & FLAG_C;
+            let mut f = oldf | FLAG_N;
+            if res == 0             { f |= FLAG_Z; }
+            if (old & 0x0F) == 0    { f |= FLAG_H; }
+            cpu.register_file.set_8bit(&Reg8::F, f);
+        },
 
         // 16-bit Arithmetic
         MicroOp::Add16 { dest, src }         => todo!(),
