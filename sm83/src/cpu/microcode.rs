@@ -407,13 +407,13 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
 
-        // 16-bit Arithmetic
+        // 16-bit Arithmetic  --------------------------------------------------
         MicroOp::Add16 { dest, src }         => todo!(),
         MicroOp::AddSpE { e }                => todo!(),
         MicroOp::Inc16 { reg }               => todo!(),
         MicroOp::Dec16 { reg }               => todo!(),
 
-        // Rotate, Shift & Bit Ops
+        // Rotate, Shift & Bit Ops  --------------------------------------------------
         MicroOp::Rlc        { dst, src } => todo!(),
         MicroOp::Rrc        { dst, src } => todo!(),
         MicroOp::Rl         { dst, src } => todo!(),
@@ -426,7 +426,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
         MicroOp::SetBit     { bit, reg } => todo!(),
         MicroOp::ResetBit   { bit, reg } => todo!(),
 
-        // Control Flow
+        // Control Flow  --------------------------------------------------
         MicroOp::CheckCond  { cond }    => todo!(),
         MicroOp::JumpAbs    { addr }    => todo!(),
         MicroOp::JumpRel    { offset }  => todo!(),
@@ -437,7 +437,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
         MicroOp::FetchOpcode            => todo!(),
         MicroOp::DecodeCb   { prefix }  => todo!(),
 
-        // System & Interrupt State
+        // System & Interrupt State  --------------------------------------------------
         MicroOp::SetFlag        { flag, value } => todo!(),
         MicroOp::GetFlag        { flag }        => todo!(),
         MicroOp::SetIme         { value }       => todo!(),
