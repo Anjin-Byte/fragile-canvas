@@ -32,7 +32,6 @@ impl Condition {
     }
 }
 
-/// High-level micro-operations for the Sharp SM83 CPU core
 #[derive(Debug)]
 pub enum MicroOp {
     // ----------------------------------------
@@ -157,83 +156,48 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.register_file.set_8bit(&dst, v);
         }
         MicroOp::LoadReg16 { dst, src } => {
-            // Read the full 16-bit value out of the `src` register pair.
-            // This uses RegisterFile::get_16bit, which concatenates the two 8-bit halves.
             let value: u16 = cpu.register_file.get_16bit(&src);
-            // Write that 16-bit value into the `dst` register pair.
-            // RegisterFile::set_16bit splits it back into high/low bytes.
             cpu.register_file.set_16bit(&dst, value);
         },
         MicroOp::ReadImmediate8 { into } => {
-            // Fetch the byte at the address in the PC register.
-            // This is the “immediate” operand encoded in the instruction stream.
             let pc_addr = cpu.register_file.get_16bit(&Reg16::PC);
             let imm = cpu.bus.borrow_mut().read(pc_addr);
-            // Advance PC by one so it now points to the next instruction byte.
             cpu.register_file.inc16(&Reg16::PC);
-            // Write the fetched immediate value into the specified 8-bit register.
             cpu.register_file.set_8bit(&into, imm);
         },
         MicroOp::ReadImmediate16 { into } => {
-            // Fetch the current PC value
             let pc = cpu.register_file.get_16bit(&Reg16::PC);
-            // Read the low byte from memory at [PC]
-            let lo = cpu.bus.borrow_mut().read(pc); // Memory read via Bus 
-            // Increment PC to point to the high byte
+            let lo = cpu.bus.borrow_mut().read(pc);
             cpu.register_file.inc16(&Reg16::PC);
-            // Read the high byte from memory at the new PC
+    
             let pc = cpu.register_file.get_16bit(&Reg16::PC);
             let hi = cpu.bus.borrow_mut().read(pc);
-            // Advance PC past the immediate operand
             cpu.register_file.inc16(&Reg16::PC);
-            // Combine the two bytes into a little-endian u16
+
             let value = u16::from_le_bytes([lo, hi]);
-            // Write the resulting 16-bit value into the destination register
             cpu.register_file.set_16bit(&into, value);
         },
         MicroOp::ReadMemReg8 { addr_reg, into }  => {
-            // Fetch the 16-bit address from the given register pair (e.g., HL, BC, DE)
-            // `get_16bit` reads two 8-bit registers and combines them big-endian → u16
             let address: u16 = cpu.register_file.get_16bit(&addr_reg);
-            // Perform a memory read on the shared bus at that address
-            // `bus.read` consults the MMU to route the read to ROM, RAM, I/O, etc.
             let value: u8 = cpu.bus.borrow_mut().read(address);
-            // Write the fetched byte into the target 8-bit register
-            // `set_8bit` updates the specified Reg8 in the RegisterFile
             cpu.register_file.set_8bit(&into, value);
         },
         MicroOp::ReadMemImm8 { addr, into } => {
-            // Perform the memory read:
-            // The `Bus` trait abstracts ROM, RAM, MMIO, boot-ROM mapping, etc.  
-            // Here we borrow the bus and read one byte at the given 16-bit address.
             let value: u8 = cpu.bus
-                .borrow_mut() // borrow the shared Bus
-                .read(addr);  // read at absolute address `addr`
-            // Write the result into the target CPU register:
-            // The RegisterFile handles writing into one of A, B, C, D, E, H, L, IR, IE, or F.
+                .borrow_mut()
+                .read(addr);
             cpu.register_file
-                .set_8bit(&into, value);  // set register `into` = `value`
+                .set_8bit(&into, value);
         },
         MicroOp::ReadHighPage { offset, into } => {
-            // Read the 8-bit offset from the specified register.
-            // This value n comes from the instruction operand (immediate or register C).
             let off_val: u16 = cpu.register_file.get_8bit(&offset) as u16;  
-            // Form the full 16-bit address by adding the high-page base (0xFF00).
-            // All I/O registers and High RAM live at 0xFF00 + n.
             let addr: u16 = 0xFF00_u16.wrapping_add(off_val);
-            // Perform the memory read via the shared bus.
-            // `read` takes an absolute Game Boy address and returns the byte stored there.
             let value: u8 = cpu.bus.borrow_mut().read(addr);                  
-            // Write the fetched byte back into the target 8-bit CPU register.
             cpu.register_file.set_8bit(&into, value);                        
         },
         MicroOp::WriteMemReg8 { addr_reg, src } => {
-            // Read the target 16-bit address from the given register pair (e.g. BC, DE, or HL)
             let addr: u16 = cpu.register_file.get_16bit(&addr_reg);
-            // Read the 8-bit value from the specified source register (e.g. A, B, C…)
             let value: u8 = cpu.register_file.get_8bit(&src);
-            // Write that byte into memory via the shared bus abstraction
-            // The Bus implementation (MMU) will route this to VRAM, external RAM, etc.
             cpu.bus.borrow_mut().write(addr, value);
         },        
         MicroOp::WriteMemImm8 { addr, src } => {
@@ -261,42 +225,29 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
 
         // Stack Operations -------------------------------------------------------------
         MicroOp::Push { src } => {
-            // Read the full 16-bit value from the source register (BC, DE, HL, or AF)
             let value: u16 = cpu.register_file.get_16bit(&src);
-            // Split into two 8-bit halves: [high, low]
             let [high, low] = value.to_be_bytes();
-            // Decrement SP by 1 to make room for the high byte
             cpu.register_file.dec16(&Reg16::SP);
+
             let sp = cpu.register_file.get_16bit(&Reg16::SP);
-            // Write the high byte to memory at [SP]
             cpu.bus.borrow_mut().write(sp, high);
-            // Decrement SP by 1 again to make room for the low byte
             cpu.register_file.dec16(&Reg16::SP);
+
             let sp = cpu.register_file.get_16bit(&Reg16::SP);
-            // Write the low byte to memory at [SP]
             cpu.bus.borrow_mut().write(sp, low);
-            // Next cycle overlaps with fetching the following opcode.
         },
         MicroOp::Pop { dst } => {
-            // ─── M2: Read low byte from stack
-            // 1. Get current SP
             let sp_addr = cpu.register_file.get_16bit(&Reg16::SP);
-            // 2. Read the low byte from memory[SP]
             let low = cpu.bus.borrow_mut().read(sp_addr);
-            // 3. Increment SP by 1
             cpu.register_file.inc16(&Reg16::SP);
-            // ─── M3: Read high byte from stack
-            // 4. Get updated SP
+
             let sp_addr = cpu.register_file.get_16bit(&Reg16::SP);
-            // 5. Read the high byte from memory[SP]
             let high = cpu.bus.borrow_mut().read(sp_addr);
-            // 6. Increment SP by 1 again
             cpu.register_file.inc16(&Reg16::SP);
-            // ─── Combine into a 16-bit value (little endian)
+
             let value = u16::from_le_bytes([low, high]);
-            // ─── Write result into the destination register
             cpu.register_file.set_16bit(&dst, value);
-            // ─── Special case: POP AF must mask F’s low nibble
+            // !!! Special case: POP AF must mask F’s low nibble
             // On real hardware, the lower 4 bits of F are always zero; if dst == AF,
             // clear any stray low bits from the popped value.
             if let Reg16::AF = dst {
@@ -307,17 +258,13 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
 
         // Arithmetic & Logic (8-bit) --------------------------------------------------
         MicroOp::Alu8 { kind, dest, src } => {
-            // 1) Read operands
             let a = cpu.register_file.get_8bit(&dest);
             let b = match src {
                 Operand8::Reg(r) => cpu.register_file.get_8bit(&r),
                 Operand8::Imm(v)   => v,
             };
-            // 2) Compute ALU result + flags
             let AluResult { value, z, n, h, c } = alu(kind, a, b);
-            // 3) Write back result
             cpu.register_file.set_8bit(&dest, value);
-            // 4) Pack flags into F
             let mut f = 0;
             if z { f |= FLAG_Z; }
             if n { f |= FLAG_N; }
@@ -360,7 +307,6 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             }
             cpu.register_file.set_8bit(&Reg8::A, a);
         
-            // Reconstruct flags:
             // Z: set if result is zero
             // N: preserved from previous operation
             // H: always cleared after DAA
@@ -372,7 +318,6 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.register_file.set_8bit(&Reg8::F, f);
         },    
         MicroOp::Cpl => {
-            // A ← ¬A
             let a = cpu.register_file.get_8bit(&Reg8::A);
             cpu.register_file.set_8bit(&Reg8::A, !a);
             // N=1, H=1, preserve Z and C
@@ -393,7 +338,6 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.register_file.set_8bit(&Reg8::F, prev_z | new_c);
         },        
         MicroOp::Inc8 { target } => {
-            // Read & increment
             let (reg, old) = match target {
                 Operand8::Reg(r) => (r, cpu.register_file.get_8bit(&r)),
                 _ => panic!("Inc8 only supports register targets"),
@@ -408,7 +352,6 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
         MicroOp::Dec8 { target } => {
-            // Read & decrement
             let (reg, old) = match target {
                 Operand8::Reg(r) => (r, cpu.register_file.get_8bit(&r)),
                 _ => panic!("Dec8 only supports register targets"),
@@ -425,7 +368,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
 
         // 16-bit Arithmetic  --------------------------------------------------
         MicroOp::Add16 { dest, src } => {
-            // HL (or other dest) ← dest + src
+            // HL (or other dest) <- dest + src
             let a = cpu.register_file.get_16bit(&dest);
             let b = cpu.register_file.get_16bit(&src);
             let result = a.wrapping_add(b);
@@ -445,7 +388,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
         },
         
         MicroOp::AddSpE { e } => {
-            // SP ← SP + signed immediate e
+            // SP <- SP + signed immediate e
             let sp = cpu.register_file.get_16bit(&Reg16::SP);
             let result = (sp as i16).wrapping_add(e as i16) as u16;
             cpu.register_file.set_16bit(&Reg16::SP, result);
@@ -464,12 +407,10 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
         },
         
         MicroOp::Inc16 { reg } => {
-            // Simply increment the 16-bit register; no flags affected
             cpu.register_file.inc16(&reg);
         },
         
         MicroOp::Dec16 { reg } => {
-            // Simply decrement the 16-bit register; no flags affected
             cpu.register_file.dec16(&reg);
         },
 
