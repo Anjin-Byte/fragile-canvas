@@ -1,9 +1,17 @@
 use crate::cpu::CPU;
 
-use super::{alu::{alu, AluResult}, registers::{Flag, Reg16, Reg8}};
-
-#[derive(Debug)]
-pub enum AluOpKind { Add, Sub, Xor, And, Or, }
+use super::{
+    alu::{
+        alu, 
+        AluResult, 
+        AluOpKind
+    }, 
+    registers::{
+        Flag, 
+        Reg16, 
+        Reg8
+    }
+};
 
 #[derive(Debug)]
 pub enum Operand8 { Reg(Reg8), Imm(u8) }
@@ -37,35 +45,24 @@ pub enum MicroOp {
     // ----------------------------------------
     // Memory & Register Access
     // ----------------------------------------
-    /// Copy an 8-bit register into another
     LoadReg8 { dst: Reg8, src: Reg8 },
-    /// Copy a 16-bit register into another
     LoadReg16 { dst: Reg16, src: Reg16 },
-    /// Read next byte from PC into an 8-bit register
     ReadImmediate8 { into: Reg8 },
-    /// Read next two bytes (little-endian) from PC into a 16-bit register
     ReadImmediate16 { into: Reg16 },
-    /// Read from memory at address in `addr_reg` into an 8-bit register
     ReadMemReg8 { addr_reg: Reg16, into: Reg8 },
-    /// Read from absolute 16-bit immediate address into an 8-bit register
     ReadMemImm8 { addr: u16, into: Reg8 },
     /// Read from high-page (0xFF00 + offset) into an 8-bit register
     ReadHighPage { offset: Reg8, into: Reg8 },
-    /// Write an 8-bit register into memory at address in `addr_reg`
     WriteMemReg8 { addr_reg: Reg16, src: Reg8 },
-    /// Write an 8-bit register into memory at absolute 16-bit immediate
     WriteMemImm8 { addr: u16, src: Reg8 },
     /// Write an 8-bit register into high-page (0xFF00 + offset)
     WriteHighPage { offset: Reg8, src: Reg8 },
-    /// Push a 16-bit register onto the stack
     Push { src: Reg16 },
-    /// Pop a 16-bit value from the stack into a register
     Pop { dst: Reg16 },
 
     // ----------------------------------------
     // Arithmetic & Logic (8-bit)
     // ----------------------------------------
-    /// Perform an 8-bit ALU operation, reading from either a register or immediate
     Alu8 { kind: AluOpKind, dest: Reg8, src: Operand8 },
     /// Decimal Adjust Accumulator (BCD correction)
     Daa,
@@ -75,21 +72,16 @@ pub enum MicroOp {
     Scf,
     /// Complement Carry flag, clear N and H
     Ccf,
-    /// Increment an 8-bit register or (HL)
     Inc8 { target: Operand8 },
-    /// Decrement an 8-bit register or (HL)
     Dec8 { target: Operand8 },
 
     // ----------------------------------------
     // 16-bit Arithmetic
     // ----------------------------------------
-    /// Add one 16-bit register into another (e.g. HL += rr)
     Add16 { dest: Reg16, src: Reg16 },
     /// Add signed 8-bit immediate to SP, update H/C (SP = SP + e)
     AddSpE { e: i8 },
-    /// Increment a 16-bit register (BC, DE, HL, SP)
     Inc16 { reg: Reg16 },
-    /// Decrement a 16-bit register (BC, DE, HL, SP)
     Dec16 { reg: Reg16 },
 
     // ----------------------------------------
@@ -201,25 +193,13 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             cpu.bus.borrow_mut().write(addr, value);
         },        
         MicroOp::WriteMemImm8 { addr, src } => {
-            // Read the 8-bit value from the source register `src`.
-            // `get_8bit` returns the current contents of that register.
             let value: u8 = cpu.register_file.get_8bit(&src);
-            // Write that value into memory at the absolute 16-bit address `addr`.
-            // 'bus` is an Rc<RefCell<dyn Bus>>; we borrow it mutably to call `write`.
             cpu.bus.borrow_mut().write(addr, value);
         },
         MicroOp::WriteHighPage { offset, src } => {
-            // Read the 8-bit offset value from the specified register.
-            // This comes from, e.g., the operand in an instruction like LD (0xFF00+R), R′.
             let offset_val: u8 = cpu.register_file.get_8bit(&offset);              
-            // Compute the target address in the “high page” (0xFF00–0xFFFF).
-            // The Game Boy maps 0xFF00–0xFF7F to I/O registers and 0xFF80–0xFFFE to high RAM.
-            // Wrapping_add is safe here because offset_val is 0–0xFF.
             let addr: u16 = 0xFF00u16.wrapping_add(offset_val as u16);              
-            // Read the byte to store from the source register.
             let value: u8 = cpu.register_file.get_8bit(&src);                     
-            // Perform the memory write via the shared Bus (MMU).
-            // The bus implements address dispatching (ROM, VRAM, I/O, etc.).
             cpu.bus.borrow_mut().write(addr, value);                              
         },
 
@@ -250,6 +230,7 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             // !!! Special case: POP AF must mask F’s low nibble
             // On real hardware, the lower 4 bits of F are always zero; if dst == AF,
             // clear any stray low bits from the popped value.
+            // Could add logic in register_file to ground lower 4 bits
             if let Reg16::AF = dst {
                 let f = cpu.register_file.get_8bit(&Reg8::F) & 0xF0;
                 cpu.register_file.set_8bit(&Reg8::F, f);
@@ -263,13 +244,16 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
                 Operand8::Reg(r) => cpu.register_file.get_8bit(&r),
                 Operand8::Imm(v)   => v,
             };
-            let AluResult { value, z, n, h, c } = alu(kind, a, b);
+
+            let AluResult { value, code: flag } = alu(kind, a, b);
             cpu.register_file.set_8bit(&dest, value);
+
             let mut f = 0;
-            if z { f |= FLAG_Z; }
-            if n { f |= FLAG_N; }
-            if h { f |= FLAG_H; }
-            if c { f |= FLAG_C; }
+            if flag.z { f |= FLAG_Z; }
+            if flag.n { f |= FLAG_N; }
+            if flag.h { f |= FLAG_H; }
+            if flag.c { f |= FLAG_C; }
+
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
         MicroOp::Daa => {
@@ -386,7 +370,6 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             }
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
-        
         MicroOp::AddSpE { e } => {
             // SP <- SP + signed immediate e
             let sp = cpu.register_file.get_16bit(&Reg16::SP);
@@ -405,11 +388,9 @@ pub fn execute(cpu: &mut CPU, op: MicroOp) {
             }
             cpu.register_file.set_8bit(&Reg8::F, f);
         },
-        
         MicroOp::Inc16 { reg } => {
             cpu.register_file.inc16(&reg);
         },
-        
         MicroOp::Dec16 { reg } => {
             cpu.register_file.dec16(&reg);
         },

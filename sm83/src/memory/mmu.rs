@@ -50,7 +50,7 @@ impl Bus for MMU {
             0xFF00..=0xFF7F => self.io_registers[addr as usize - 0xFF00],
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
             0xFFFF => self.interrupt_enable_register,
-            _ => 0, // Handle unused memory areas and echo RAM
+            _ => 0,
         }
     }
 
