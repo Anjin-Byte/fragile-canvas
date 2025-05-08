@@ -151,7 +151,7 @@ pub fn decode_instruction(opcode: u8) -> MicrocodeQueue {
                 src:  Operand8::Reg(Reg8::A),
             },
         ]),
-        0xCB => panic!("CB should be matched from here!"),
+        0xCB => panic!("CB shouldn't be matched from here!"),
         _ => panic!("Unimplemented opcode: {:02X}", opcode),
     }
 }
