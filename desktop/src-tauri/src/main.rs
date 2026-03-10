@@ -41,14 +41,19 @@ fn read_state(cpu: &CPU<MMU>) -> CpuState {
 }
 
 #[tauri::command]
-fn load_rom(emu: State<Emulator>, boot_rom: Vec<u8>, cart_rom: Vec<u8>) -> Result<CpuState, String> {
+fn load_rom(emu: State<Emulator>, cart_rom: Vec<u8>) -> Result<CpuState, String> {
     let mut mmu = MMU::new();
-    mmu.load_boot_rom(&boot_rom)?;
+    mmu.load_boot_rom(sm83::BOOT_ROM).unwrap();
     mmu.load_cartridge(&cart_rom);
     let cpu = CPU::new(mmu, Tracer::off());
     let state = read_state(&cpu);
     *emu.0.lock().unwrap() = Some(cpu);
     Ok(state)
+}
+
+#[tauri::command]
+fn load_default_rom(emu: State<Emulator>) -> Result<CpuState, String> {
+    load_rom(emu, sm83::DEFAULT_ROM.to_vec())
 }
 
 #[tauri::command]
@@ -113,6 +118,7 @@ fn main() {
         .manage(Emulator(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             load_rom,
+            load_default_rom,
             step,
             get_state,
             read_memory,

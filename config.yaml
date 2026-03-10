@@ -1,2 +1,1 @@
-boot_rom: assets/ROMs/DMG_ROM.bin
-cart_rom: assets/ROMs/Tetris.gb
+cart_rom: roms/tobudx.gb

@@ -7,7 +7,6 @@ use std::time::SystemTime;
 
 #[derive(Deserialize)]
 struct Config {
-    boot_rom: String,
     cart_rom: String,
 }
 
@@ -58,12 +57,7 @@ fn main() {
     };
 
     let mut mmu = MMU::new();
-
-    let boot_rom = load_file(Path::new(&config.boot_rom));
-    mmu.load_boot_rom(&boot_rom).unwrap_or_else(|e| {
-        eprintln!("{}", e);
-        process::exit(1);
-    });
+    mmu.load_boot_rom(sm83::BOOT_ROM).unwrap();
 
     let cartridge = load_file(Path::new(cart_path));
     mmu.load_cartridge(&cartridge);

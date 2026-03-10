@@ -17,22 +17,28 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
   const [error, setError] = useState<string | null>(null);
 
   async function loadFiles() {
-    const bootInput = document.getElementById("boot-rom") as HTMLInputElement;
     const cartInput = document.getElementById("cart-rom") as HTMLInputElement;
 
-    if (!bootInput.files?.[0] || !cartInput.files?.[0]) {
-      setError("select both ROM files");
+    if (!cartInput.files?.[0]) {
+      setError("select a ROM file");
       return;
     }
 
-    const bootBuf = await bootInput.files[0].arrayBuffer();
     const cartBuf = await cartInput.files[0].arrayBuffer();
 
     try {
-      const state = await backend.loadRom(
-        new Uint8Array(bootBuf),
-        new Uint8Array(cartBuf),
-      );
+      const state = await backend.loadRom(new Uint8Array(cartBuf));
+      setCpu(state);
+      setLoaded(true);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function loadDefault() {
+    try {
+      const state = await backend.loadDefaultRom();
       setCpu(state);
       setLoaded(true);
       setError(null);
@@ -65,14 +71,11 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
       {!loaded ? (
         <div className="rom-loader">
           <label>
-            Boot ROM
-            <input id="boot-rom" type="file" />
-          </label>
-          <label>
             Cartridge
             <input id="cart-rom" type="file" />
           </label>
           <button onClick={loadFiles}>Load</button>
+          <button onClick={loadDefault}>Load Default</button>
         </div>
       ) : (
         <div className="debugger">

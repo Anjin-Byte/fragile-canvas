@@ -53,3 +53,19 @@ cargo run --release -p fragile-canvas -- path/to/rom.gb
 MIT
 
 ---
+
+## Third-Party Licenses
+
+Tobu Tobu Girl Deluxe
+Copyright © Tangram Games
+
+Source code licensed under the MIT License.
+Game assets (graphics, music, sound, text) licensed under
+Creative Commons Attribution 4.0 International (CC BY 4.0).
+
+Original project:
+https://github.com/SimonLarsen/tobutobugirl
+
+---
+
+If you enjoy the bundled demo, consider supporting [Simon Larsen](https://github.com/SimonLarsen) and the creators at Tangram Games.

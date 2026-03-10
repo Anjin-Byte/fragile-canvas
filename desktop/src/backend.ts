@@ -2,11 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CpuState, EmulatorBackend } from "@fragile-canvas/ui";
 
 export const tauriBackend: EmulatorBackend = {
-  async loadRom(bootRom: Uint8Array, cartRom: Uint8Array): Promise<CpuState> {
+  async loadRom(cartRom: Uint8Array): Promise<CpuState> {
     return invoke<CpuState>("load_rom", {
-      bootRom: Array.from(bootRom),
       cartRom: Array.from(cartRom),
     });
+  },
+
+  async loadDefaultRom(): Promise<CpuState> {
+    return invoke<CpuState>("load_default_rom");
   },
 
   async step(ticks: number): Promise<CpuState> {

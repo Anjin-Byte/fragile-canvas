@@ -12,10 +12,16 @@ async function ensureInit() {
 }
 
 export const wasmBackend: EmulatorBackend = {
-  async loadRom(bootRom: Uint8Array, cartRom: Uint8Array): Promise<CpuState> {
+  async loadRom(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
     emu = new EmulatorWasm();
-    return emu.loadRom(bootRom, cartRom) as CpuState;
+    return emu.loadRom(cartRom) as CpuState;
+  },
+
+  async loadDefaultRom(): Promise<CpuState> {
+    await ensureInit();
+    emu = new EmulatorWasm();
+    return emu.loadDefaultRom() as CpuState;
   },
 
   async step(ticks: number): Promise<CpuState> {

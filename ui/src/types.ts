@@ -11,7 +11,8 @@ export interface CpuState {
 }
 
 export interface EmulatorBackend {
-  loadRom(bootRom: Uint8Array, cartRom: Uint8Array): Promise<CpuState>;
+  loadRom(cartRom: Uint8Array): Promise<CpuState>;
+  loadDefaultRom(): Promise<CpuState>;
   step(ticks: number): Promise<CpuState>;
   getState(): Promise<CpuState>;
   readMemory(addr: number, length: number): Promise<number[]>;

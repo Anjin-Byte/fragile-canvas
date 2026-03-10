@@ -47,14 +47,19 @@ impl EmulatorWasm {
     }
 
     #[wasm_bindgen(js_name = loadRom)]
-    pub fn load_rom(&mut self, boot_rom: &[u8], cart_rom: &[u8]) -> Result<JsValue, JsValue> {
+    pub fn load_rom(&mut self, cart_rom: &[u8]) -> Result<JsValue, JsValue> {
         let mut mmu = MMU::new();
-        mmu.load_boot_rom(boot_rom).map_err(|e| JsValue::from_str(&e))?;
+        mmu.load_boot_rom(sm83::BOOT_ROM).unwrap();
         mmu.load_cartridge(cart_rom);
         let cpu = CPU::new(mmu, Tracer::off());
         let state = read_state(&cpu);
         self.cpu = Some(cpu);
         serde_wasm_bindgen::to_value(&state).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[wasm_bindgen(js_name = loadDefaultRom)]
+    pub fn load_default_rom(&mut self) -> Result<JsValue, JsValue> {
+        self.load_rom(sm83::DEFAULT_ROM)
     }
 
     pub fn step(&mut self, ticks: u32) -> Result<JsValue, JsValue> {
