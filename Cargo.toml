@@ -1,3 +1,3 @@
 [workspace]
-members = ["sm83", "desktop"]
+members = ["sm83", "cli", "desktop/src-tauri", "wasm"]
 resolver = "2"

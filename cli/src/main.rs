@@ -60,7 +60,10 @@ fn main() {
     let mut mmu = MMU::new();
 
     let boot_rom = load_file(Path::new(&config.boot_rom));
-    mmu.load_boot_rom(&boot_rom);
+    mmu.load_boot_rom(&boot_rom).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
 
     let cartridge = load_file(Path::new(cart_path));
     mmu.load_cartridge(&cartridge);

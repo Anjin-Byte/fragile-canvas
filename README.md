@@ -13,7 +13,11 @@ rather than implementing each instruction as a monolithic handler.
 
 ```
 sm83/        emulator library (CPU, MMU, decoder, microcode, tracer)
-desktop/     native binary (ROM loading, CLI, config)
+cli/         headless binary (ROM loading, CLI, config, debug tracing)
+desktop/     Tauri + React native desktop app
+ui/          shared React components and styles
+wasm/        wasm-bindgen crate (compiles sm83 to WASM)
+web/         Vite + React browser app (WASM backend)
 ```
 
 ---
@@ -32,6 +36,8 @@ make build     release build
 make run       run with config defaults
 make debug     run with instruction trace -> logs/<timestamp>.log
 make test      run sm83 tests
+make desktop   launch Tauri desktop app
+make web       build WASM and start browser dev server
 ```
 
 Override the cartridge from the command line:

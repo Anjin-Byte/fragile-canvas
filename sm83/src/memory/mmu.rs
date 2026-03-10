@@ -36,14 +36,17 @@ impl MMU {
         }
     }
 
-    pub fn load_boot_rom(&mut self, data: &[u8]) {
-        assert!(
-            data.len() == BOOT_ROM_SIZE,
-            "boot ROM must be exactly {BOOT_ROM_SIZE} bytes, got {}",
-            data.len()
-        );
+    pub fn load_boot_rom(&mut self, data: &[u8]) -> Result<(), String> {
+        if data.len() != BOOT_ROM_SIZE {
+            return Err(format!(
+                "boot ROM must be exactly {} bytes, got {}",
+                BOOT_ROM_SIZE,
+                data.len()
+            ));
+        }
         self.boot_rom.copy_from_slice(data);
         self.boot_rom_mapped = true;
+        Ok(())
     }
 
     pub fn load_cartridge(&mut self, data: &[u8]) {

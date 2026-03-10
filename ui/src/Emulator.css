@@ -1,0 +1,55 @@
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem;
+  font-family: monospace;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.rom-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rom-loader label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.controls button {
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+
+.registers {
+  border-collapse: collapse;
+  width: 200px;
+}
+
+.registers td {
+  padding: 0.25rem 0.75rem;
+  border-bottom: 1px solid #333;
+}
+
+.registers td:first-child {
+  font-weight: bold;
+  width: 60px;
+}
+
+.error {
+  color: #e44;
+  margin-top: 1rem;
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicholasreynolds/tauri-schema/refs/heads/main/tauri-conf-schema.json",
+  "productName": "fragile-canvas",
+  "version": "0.1.0",
+  "identifier": "com.fragile-canvas.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "fragile-canvas",
+        "width": 640,
+        "height": 576
+      }
+    ]
+  }
+}
