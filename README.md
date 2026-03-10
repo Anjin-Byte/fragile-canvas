@@ -7,6 +7,8 @@ which execute one per cycle through a fetch-decode-execute pipeline.
 This decomposes the full ISA into a small set of reusable building blocks
 rather than implementing each instruction as a monolithic handler.
 
+This project distributes the Tobu Tobu Girl ROM as an example / demo game. If you enjoy the bundled demo, consider supporting [Simon Larsen](https://github.com/SimonLarsen) and the creators at Tangram Games.
+
 ---
 
 ## Structure
@@ -67,5 +69,3 @@ Original project:
 https://github.com/SimonLarsen/tobutobugirl
 
 ---
-
-If you enjoy the bundled demo, consider supporting [Simon Larsen](https://github.com/SimonLarsen) and the creators at Tangram Games.
