@@ -1,4 +1,4 @@
-# fragile-canvas
+# fragile-canvas ([demo](https://anjin-byte.github.io/fragile-canvas/))
 
 Game Boy (DMG) emulator. The SM83 CPU is modeled as a microcode engine:
 each opcode is decoded into a sequence of primitive `MicroOp`s
@@ -51,3 +51,5 @@ cargo run --release -p fragile-canvas -- path/to/rom.gb
 ## License
 
 MIT
+
+---
