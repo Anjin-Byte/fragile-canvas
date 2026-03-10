@@ -1,0 +1,13 @@
+[package]
+name = "fragile-canvas"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fragile-canvas"
+path = "src/main.rs"
+
+[dependencies]
+sm83 = { path = "../sm83" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"

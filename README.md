@@ -1,37 +1,47 @@
-# SM83 Core Emulator
+# fragile-canvas
 
-This project is a work-in-progress **Game Boy CPU emulator**, written in **pure Rust** with modular components for decoding, microcode execution, memory mapping, and register management.
-
----
-
-## 🛠️ Project Structure
-
-- `cpu/` — Core CPU logic
-  - `pipeline.rs` – Implements a fetch-decode-execute state machine
-  - `decoder.rs` – Converts opcodes into micro-operations (`MicroOp`s)
-  - `microcode.rs` – (WIP) Logic to interpret and execute individual micro-ops
-  - `registers.rs` – Emulates 8-bit and 16-bit CPU registers, flags, and bitwise operations
-  - `interrupts.rs` – Basic interrupt vector table and helpers
-
-- `memory/`
-  - `mmu.rs` – Memory Management Unit: models Game Boy memory layout (ROM, VRAM, RAM, I/O)
-  - `bus.rs` – Abstract memory bus trait used by the CPU
-
-- `utils/`
-  - `bit_twiddling.rs` – Helpers for working with individual bits
+Game Boy (DMG) emulator. The SM83 CPU is modeled as a microcode engine:
+each opcode is decoded into a sequence of primitive `MicroOp`s
+(register loads, ALU operations, memory reads/writes, flag updates)
+which execute one per cycle through a fetch-decode-execute pipeline.
+This decomposes the full ISA into a small set of reusable building blocks
+rather than implementing each instruction as a monolithic handler.
 
 ---
 
-## 🎯 Goals
+## Structure
 
-- 🧩 **Modular CPU core**: Structured around micro-ops and pipelines, to support flexible instruction modeling
-- 🧠 **Educational architecture**: Build understanding of low-level CPU execution (microcode, flags, interrupt handling)
+```
+sm83/        emulator library (CPU, MMU, decoder, microcode, tracer)
+desktop/     native binary (ROM loading, CLI, config)
+```
+
 ---
 
-## ✨ License
+## Usage
+
+Requires a DMG boot ROM and a cartridge ROM. Paths are set in `config.yaml`:
+
+```yaml
+boot_rom: assets/ROMs/DMG_ROM.bin
+cart_rom: assets/ROMs/Tetris.gb
+```
+
+```
+make build     release build
+make run       run with config defaults
+make debug     run with instruction trace -> logs/<timestamp>.log
+make test      run sm83 tests
+```
+
+Override the cartridge from the command line:
+
+```
+cargo run --release -p fragile-canvas -- path/to/rom.gb
+```
+
+---
+
+## License
 
 MIT
-
----
-
-*Built as a learning project to better understand CPU design, emulation, and systems programming in Rust.*

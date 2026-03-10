@@ -1,0 +1,2 @@
+boot_rom: assets/ROMs/DMG_ROM.bin
+cart_rom: assets/ROMs/Tetris.gb
