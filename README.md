@@ -29,8 +29,8 @@ web/         Vite + React browser app (WASM backend)
 Requires a DMG boot ROM and a cartridge ROM. Paths are set in `config.yaml`:
 
 ```yaml
-boot_rom: assets/ROMs/DMG_ROM.bin
-cart_rom: assets/ROMs/Tetris.gb
+boot_rom: path/to/boot_rom.bin
+cart_rom: path/to/cartridge.gb
 ```
 
 ```
