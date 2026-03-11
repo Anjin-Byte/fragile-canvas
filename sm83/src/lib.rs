@@ -1,5 +1,8 @@
+pub mod clock;
 pub mod cpu;
 pub mod memory;
+pub mod system;
+pub mod timer;
 pub mod trace;
 
 pub const BOOT_ROM: &[u8; 256] = include_bytes!("../roms/bootrom.bin");

@@ -1,5 +1,6 @@
 
 use crate::memory::bus::Bus;
+use crate::timer::{self, Timer};
 
 const BOOT_ROM_SIZE: usize = 0x100;
 const BOOT_ROM_UNMAP: u16 = 0xFF50;
@@ -17,6 +18,7 @@ pub struct MMU {
     io_registers: [u8; 0x80],
     hram: [u8; 0x7F],
     interrupt_enable_register: u8,
+    pub timer: Timer,
 }
 
 impl MMU {
@@ -33,6 +35,7 @@ impl MMU {
             io_registers: [0; 0x80],
             hram: [0; 0x7F],
             interrupt_enable_register: 0,
+            timer: Timer::new(),
         }
     }
 
@@ -59,6 +62,11 @@ impl MMU {
                 .copy_from_slice(&data[0x4000..0x4000 + bank_1_end]);
         }
     }
+
+    /// Returns true if the address belongs to the timer (FF04-FF07).
+    fn is_timer_addr(addr: u16) -> bool {
+        matches!(addr, timer::DIV_ADDR..=timer::TAC_ADDR)
+    }
 }
 
 impl Bus for MMU {
@@ -71,6 +79,7 @@ impl Bus for MMU {
             0xA000..=0xBFFF => self.external_ram[addr as usize - 0xA000],
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000],
             0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00],
+            0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.read(addr),
             0xFF00..=0xFF7F => self.io_registers[addr as usize - 0xFF00],
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
             0xFFFF => self.interrupt_enable_register,
@@ -86,6 +95,7 @@ impl Bus for MMU {
             0xA000..=0xBFFF => self.external_ram[addr as usize - 0xA000] = value,
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000] = value,
             0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00] = value,
+            0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.write(addr, value),
             0xFF00..=0xFF7F => {
                 if addr == BOOT_ROM_UNMAP && value & 1 != 0 {
                     self.boot_rom_mapped = false;
