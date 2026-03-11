@@ -4,31 +4,18 @@
 /// ticking of all subsystems.
 ///
 /// `cpu.tick()` executes one full instruction and returns the number of
-/// T-cycles consumed.  We then advance the timer, APU, and scanline
-/// counter by that many T-cycles.
+/// T-cycles consumed.  We then advance the timer, APU, and PPU by that
+/// many T-cycles.
 
 use crate::cpu::CPU;
 use crate::memory::bus::Bus;
 use crate::trace::Tracer;
-
-/// T-cycles per scanline.
-const DOTS_PER_LINE: u16 = 456;
-/// Total scanlines per frame (0-153, V-blank at 144-153).
-const LINES_PER_FRAME: u8 = 154;
-/// First V-blank scanline.
-const VBLANK_LINE: u8 = 144;
-/// LY register address.
-const LY_ADDR: u16 = 0xFF44;
 
 pub struct GameBoy {
     pub cpu: CPU,
     pub bus: Bus,
     /// Total T-cycles (dots) executed since boot.
     total_dots: u64,
-    /// Dot counter within current scanline (0..455).
-    scanline_dots: u16,
-    /// Current scanline (0..153).
-    scanline: u8,
 }
 
 impl GameBoy {
@@ -37,8 +24,6 @@ impl GameBoy {
             cpu: CPU::new(tracer),
             bus,
             total_dots: 0,
-            scanline_dots: 0,
-            scanline: 0,
         }
     }
 
@@ -50,36 +35,39 @@ impl GameBoy {
         t_cycles
     }
 
-    /// Advance timer, APU, and scanline counter by `t` T-cycles.
+    /// Advance timer, APU, PPU, and DMA by `t` T-cycles.
+    ///
+    /// Subsystem interrupt signals write directly to `bus.if_reg` — the
+    /// hardware IF register — rather than going through `bus.read/write()`.
+    /// On real hardware these are direct internal SoC connections, not CPU
+    /// bus transactions, so they are unaffected by DMA bus conflicts.
     fn advance_subsystems(&mut self, t: u8) {
-        for _ in 0..t {
+        for i in 0..t {
             // Timer ticks every T-cycle.
             self.bus.timer.tick();
-
-            // If the timer raised an interrupt, set the IF bit.
             if self.bus.timer.interrupt_pending {
                 self.bus.timer.interrupt_pending = false;
-                let if_val = self.bus.read(0xFF0F);
-                self.bus.write(0xFF0F, if_val | (1 << 2));
+                self.bus.if_reg |= 1 << 2; // Timer interrupt: IF bit 2
             }
 
             // APU frame sequencer (clocked by DIV-APU falling edge).
             let div_fell = self.bus.timer.div_apu_fell();
             self.bus.apu.tick(div_fell);
 
-            // Minimal scanline counter (PPU stub).
-            self.scanline_dots += 1;
-            if self.scanline_dots >= DOTS_PER_LINE {
-                self.scanline_dots = 0;
-                self.scanline += 1;
-                if self.scanline >= LINES_PER_FRAME {
-                    self.scanline = 0;
-                }
-                self.bus.write(LY_ADDR, self.scanline);
-                if self.scanline == VBLANK_LINE {
-                    let if_val = self.bus.read(0xFF0F);
-                    self.bus.write(0xFF0F, if_val | 0x01);
-                }
+            // PPU — one dot per T-cycle.
+            self.bus.ppu.tick();
+            if self.bus.ppu.vblank_irq {
+                self.bus.ppu.vblank_irq = false;
+                self.bus.if_reg |= 0x01; // VBlank: IF bit 0
+            }
+            if self.bus.ppu.stat_irq {
+                self.bus.ppu.stat_irq = false;
+                self.bus.if_reg |= 0x02; // STAT: IF bit 1
+            }
+
+            // DMA ticks once per M-cycle (every 4 T-cycles).
+            if i % 4 == 3 {
+                self.bus.dma_tick();
             }
         }
         self.total_dots += t as u64;
@@ -95,15 +83,13 @@ impl GameBoy {
     }
 
     /// Advance by one M-cycle (4 T-cycles).
-    /// May overshoot slightly since cpu.tick() returns variable T-cycles.
     pub fn tick_m(&mut self) {
         self.tick();
     }
 
     /// Run for a given number of M-cycles.
     pub fn tick_n(&mut self, n: u32) {
-        let target_t = n * 4;
-        self.tick_t(target_t);
+        self.tick_t(n * 4);
     }
 
     /// Total T-cycles (dots) executed since boot.

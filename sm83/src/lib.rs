@@ -2,6 +2,7 @@ pub mod apu;
 pub mod clock;
 pub mod cpu;
 pub mod memory;
+pub mod ppu;
 pub mod session;
 pub mod system;
 pub mod timer;
