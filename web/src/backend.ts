@@ -29,6 +29,15 @@ export const wasmBackend: EmulatorBackend = {
     return emu.step(ticks) as CpuState;
   },
 
+  async tickFrame(elapsedNs: bigint): Promise<CpuState> {
+    if (!emu) throw new Error("no ROM loaded");
+    return emu.tickFrame(elapsedNs) as CpuState;
+  },
+
+  async resetGovernor(): Promise<void> {
+    if (emu) emu.resetGovernor();
+  },
+
   async getState(): Promise<CpuState> {
     if (!emu) throw new Error("no ROM loaded");
     return emu.getState() as CpuState;

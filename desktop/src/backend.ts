@@ -16,6 +16,14 @@ export const tauriBackend: EmulatorBackend = {
     return invoke<CpuState>("step", { ticks });
   },
 
+  async tickFrame(elapsedNs: bigint): Promise<CpuState> {
+    return invoke<CpuState>("tick_frame", { elapsedNs: Number(elapsedNs) });
+  },
+
+  async resetGovernor(): Promise<void> {
+    await invoke("reset_governor");
+  },
+
   async getState(): Promise<CpuState> {
     return invoke<CpuState>("get_state");
   },

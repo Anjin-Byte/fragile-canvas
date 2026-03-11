@@ -14,6 +14,8 @@ export interface EmulatorBackend {
   loadRom(cartRom: Uint8Array): Promise<CpuState>;
   loadDefaultRom(): Promise<CpuState>;
   step(ticks: number): Promise<CpuState>;
+  tickFrame(elapsedNs: bigint): Promise<CpuState>;
+  resetGovernor(): Promise<void>;
   getState(): Promise<CpuState>;
   readMemory(addr: number, length: number): Promise<number[]>;
   reset(): Promise<void>;

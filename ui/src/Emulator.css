@@ -1,5 +1,5 @@
 .container {
-  max-width: 600px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 2rem;
   font-family: monospace;
@@ -23,6 +23,8 @@ h1 {
   gap: 1rem;
 }
 
+/* Controls */
+
 .controls {
   display: flex;
   gap: 0.5rem;
@@ -33,6 +35,26 @@ h1 {
   padding: 0.4rem 0.8rem;
   cursor: pointer;
 }
+
+.controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-active {
+  border-color: #646cff !important;
+  background-color: #2a2a4a;
+}
+
+/* State panels */
+
+.state-panels {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+/* Registers */
 
 .registers {
   border-collapse: collapse;
@@ -49,7 +71,100 @@ h1 {
   width: 60px;
 }
 
+/* Flags */
+
+.flags {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.flag {
+  display: inline-block;
+  width: 28px;
+  text-align: center;
+  padding: 0.2rem 0;
+  border-radius: 3px;
+  font-weight: bold;
+  font-size: 0.85rem;
+}
+
+.flag-set {
+  background-color: #2d5a2d;
+  color: #8f8;
+}
+
+.flag-clear {
+  background-color: #333;
+  color: #666;
+}
+
+/* Memory viewer */
+
+.memory-viewer {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.memory-header label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: bold;
+}
+
+.addr-input {
+  width: 4.5em;
+  font-family: monospace;
+  font-size: 0.9rem;
+  padding: 0.25rem 0.4rem;
+  background: #1a1a1a;
+  color: inherit;
+  border: 1px solid #444;
+  border-radius: 3px;
+}
+
+.hex-dump {
+  font-size: 0.8rem;
+  line-height: 1.6;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Error */
+
 .error {
   color: #e44;
   margin-top: 1rem;
+}
+
+/* Light mode overrides */
+
+@media (prefers-color-scheme: light) {
+  .registers td {
+    border-bottom-color: #ccc;
+  }
+  .flag-set {
+    background-color: #c4ecc4;
+    color: #1a6a1a;
+  }
+  .flag-clear {
+    background-color: #eee;
+    color: #aaa;
+  }
+  .addr-input {
+    background: #f9f9f9;
+    border-color: #ccc;
+  }
+  .btn-active {
+    background-color: #e0e0ff;
+  }
 }
