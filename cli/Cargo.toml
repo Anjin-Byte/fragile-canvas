@@ -11,3 +11,4 @@ path = "src/main.rs"
 sm83 = { path = "../sm83" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+cpal = "0.15"

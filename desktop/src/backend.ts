@@ -1,23 +1,41 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CpuState, EmulatorBackend } from "@fragile-canvas/ui";
+import { AudioManager } from "./audio";
+
+const audio = new AudioManager();
+
+async function drainAndPushAudio() {
+  const samples: number[] = await invoke("drain_audio_samples");
+  if (samples.length > 0) {
+    audio.pushSamples(new Float32Array(samples));
+  }
+}
 
 export const tauriBackend: EmulatorBackend = {
   async loadRom(cartRom: Uint8Array): Promise<CpuState> {
+    await audio.init();
+    await audio.resume();
     return invoke<CpuState>("load_rom", {
       cartRom: Array.from(cartRom),
     });
   },
 
   async loadDefaultRom(): Promise<CpuState> {
+    await audio.init();
+    await audio.resume();
     return invoke<CpuState>("load_default_rom");
   },
 
   async step(ticks: number): Promise<CpuState> {
-    return invoke<CpuState>("step", { ticks });
+    const state = await invoke<CpuState>("step", { ticks });
+    await drainAndPushAudio();
+    return state;
   },
 
   async tickFrame(elapsedNs: bigint): Promise<CpuState> {
-    return invoke<CpuState>("tick_frame", { elapsedNs: Number(elapsedNs) });
+    const state = await invoke<CpuState>("tick_frame", { elapsedNs: Number(elapsedNs) });
+    await drainAndPushAudio();
+    return state;
   },
 
   async resetGovernor(): Promise<void> {
@@ -33,6 +51,7 @@ export const tauriBackend: EmulatorBackend = {
   },
 
   async reset(): Promise<void> {
+    await audio.close();
     await invoke("reset");
   },
 };

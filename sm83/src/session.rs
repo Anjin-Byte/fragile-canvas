@@ -6,7 +6,6 @@
 /// with their serialization layer and expose it over their FFI boundary.
 
 use crate::clock::ClockGovernor;
-use crate::cpu::pipeline::PipelineState;
 use crate::cpu::registers::{Reg8, Reg16};
 use crate::memory::bus::Bus;
 use crate::system::GameBoy;
@@ -37,7 +36,7 @@ fn snapshot(gb: &GameBoy) -> CpuSnapshot {
         hl: regs.get_16bit(Reg16::HL),
         ir: regs.get_8bit(Reg8::IR),
         ie: regs.get_8bit(Reg8::IE),
-        halted: matches!(gb.cpu.state, PipelineState::Halted),
+        halted: gb.cpu.halted,
     }
 }
 
@@ -121,6 +120,16 @@ impl Session {
     /// Mutable access to the inner `GameBoy`.
     pub fn gameboy_mut(&mut self) -> Option<&mut GameBoy> {
         self.gb.as_mut()
+    }
+
+    /// Drain all buffered audio samples (interleaved L,R,L,R... f32).
+    /// Returns an empty vec if no ROM is loaded.
+    pub fn drain_audio_samples(&mut self) -> Vec<f32> {
+        let mut out = Vec::new();
+        if let Some(gb) = self.gb.as_mut() {
+            gb.bus.apu.drain_audio_samples(&mut out);
+        }
+        out
     }
 }
 

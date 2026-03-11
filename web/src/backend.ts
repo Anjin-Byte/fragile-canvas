@@ -1,8 +1,10 @@
 import type { CpuState, EmulatorBackend } from "@fragile-canvas/ui";
 import init, { EmulatorWasm } from "../../wasm/pkg/fragile_canvas_wasm";
+import { AudioManager } from "./audio";
 
 let emu: EmulatorWasm | null = null;
 let initialized = false;
+const audio = new AudioManager();
 
 async function ensureInit() {
   if (!initialized) {
@@ -11,27 +13,45 @@ async function ensureInit() {
   }
 }
 
+function drainAndPushAudio() {
+  if (!emu) return;
+  const wasmSamples = emu.drainAudioSamples();
+  if (wasmSamples.length > 0) {
+    // Copy from WASM memory into a transferable ArrayBuffer
+    const samples = new Float32Array(wasmSamples);
+    audio.pushSamples(samples);
+  }
+}
+
 export const wasmBackend: EmulatorBackend = {
   async loadRom(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
     emu = new EmulatorWasm();
+    await audio.init();
+    await audio.resume();
     return emu.loadRom(cartRom) as CpuState;
   },
 
   async loadDefaultRom(): Promise<CpuState> {
     await ensureInit();
     emu = new EmulatorWasm();
+    await audio.init();
+    await audio.resume();
     return emu.loadDefaultRom() as CpuState;
   },
 
   async step(ticks: number): Promise<CpuState> {
     if (!emu) throw new Error("no ROM loaded");
-    return emu.step(ticks) as CpuState;
+    const state = emu.step(ticks) as CpuState;
+    drainAndPushAudio();
+    return state;
   },
 
   async tickFrame(elapsedNs: bigint): Promise<CpuState> {
     if (!emu) throw new Error("no ROM loaded");
-    return emu.tickFrame(elapsedNs) as CpuState;
+    const state = emu.tickFrame(elapsedNs) as CpuState;
+    drainAndPushAudio();
+    return state;
   },
 
   async resetGovernor(): Promise<void> {
@@ -49,6 +69,7 @@ export const wasmBackend: EmulatorBackend = {
   },
 
   async reset(): Promise<void> {
+    await audio.close();
     if (emu) {
       emu.reset();
       emu = null;

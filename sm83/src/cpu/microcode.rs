@@ -7,7 +7,6 @@ use super::{
         AluResult,
         AluOpKind
     },
-    pipeline::PipelineState,
     registers::{
         Flag,
         Reg16,
@@ -49,7 +48,7 @@ impl Condition {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MicroOp {
     // ----------------------------------------
     // Memory & Register Access
@@ -507,19 +506,10 @@ pub fn execute(cpu: &mut CPU, bus: &mut Bus, op: MicroOp) {
         MicroOp::CheckCond { cond } => {
             let flags = cpu.register_file.get_8bit(Reg8::F);
             if !cond.eval(flags) {
-                if let PipelineState::Execute(ref mut ops) = cpu.state {
-                    // Count how many immediate bytes the skipped ops would consume
-                    let skip: u16 = ops.iter().map(|op| match op {
-                        MicroOp::JumpRelImm => 1,
-                        MicroOp::JumpAbsImm | MicroOp::CallImm => 2,
-                        _ => 0,
-                    }).sum();
-                    ops.clear();
-                    if skip > 0 {
-                        let pc = cpu.register_file.get_16bit(Reg16::PC);
-                        cpu.register_file.set_16bit(Reg16::PC, pc.wrapping_add(skip));
-                    }
-                }
+                // Signal to the tick loop that the condition failed.
+                // The tick loop will stop executing remaining micro-ops
+                // and advance PC past any unread immediates.
+                cpu.condition_taken = false;
             }
         },
         MicroOp::JumpAbs { addr } => {
@@ -582,11 +572,10 @@ pub fn execute(cpu: &mut CPU, bus: &mut Bus, op: MicroOp) {
             cpu.register_file.set_16bit(Reg16::PC, addr);
         },
         MicroOp::FetchOpcode => {
-            cpu.state = PipelineState::Fetch;
+            // FetchOpcode is no longer needed — tick() handles fetch directly.
         },
-        MicroOp::DecodeCb { prefix } => {
-            let micro_ops = super::decoder::decode_cb_instruction(prefix);
-            cpu.state = PipelineState::Execute(micro_ops);
+        MicroOp::DecodeCb { prefix: _ } => {
+            // DecodeCb is no longer needed — tick() handles CB prefix directly.
         },
 
         // Compound Ops (read operands from PC) ----------------------------------------
@@ -690,43 +679,16 @@ pub fn execute(cpu: &mut CPU, bus: &mut Bus, op: MicroOp) {
             cpu.ime_defer = true;
         },
         MicroOp::TriggerHalt => {
-            cpu.state = PipelineState::Halted;
+            cpu.halted = true;
         },
         MicroOp::TriggerStop => {
             // STOP: for now, treat same as HALT
             // On real hardware this also affects clock/LCD
-            cpu.state = PipelineState::Halted;
+            cpu.halted = true;
         },
         MicroOp::CheckInterrupts => {
-            if !cpu.ime { return; }
-
-            let ie = cpu.register_file.get_8bit(Reg8::IE);
-            let if_reg = bus.read(0xFF0F);
-            let pending = ie & if_reg & 0x1F;
-
-            if pending == 0 { return; }
-
-            // Service highest priority (lowest bit) interrupt
-            let bit = pending.trailing_zeros() as u8;
-            let vector = 0x0040 + (bit as u16) * 0x08;
-
-            // Clear the IF bit for this interrupt
-            bus.write(0xFF0F, if_reg & !(1 << bit));
-
-            // Disable IME
-            cpu.ime = false;
-
-            // Push PC and jump to vector
-            let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let [hi, lo] = pc.to_be_bytes();
-            cpu.register_file.dec16(Reg16::SP);
-            let sp = cpu.register_file.get_16bit(Reg16::SP);
-            bus.write(sp, hi);
-            cpu.register_file.dec16(Reg16::SP);
-            let sp = cpu.register_file.get_16bit(Reg16::SP);
-            bus.write(sp, lo);
-
-            cpu.register_file.set_16bit(Reg16::PC, vector);
+            // Interrupt dispatch is now handled directly in cpu.tick().
+            // This micro-op is retained only for backward compatibility.
         },
     }
 }
@@ -736,7 +698,6 @@ mod tests {
     use super::*;
     use crate::cpu::CPU;
     use crate::memory::bus::Bus;
-    use crate::cpu::decoder::MicrocodeQueue;
 
     fn make_cpu() -> (CPU, Bus) {
         (CPU::new(crate::trace::Tracer::off()), Bus::new())
@@ -1397,116 +1358,79 @@ mod tests {
     }
 
     // =====================================================================
-    //  CheckCond
+    //  CheckCond — sets condition_taken flag
     // =====================================================================
 
     #[test]
     fn checkcond_nz_passes_when_z_clear() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::JumpRel { offset: 5 },
-        ]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1);
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(cpu.condition_taken, "NZ should pass when Z is clear");
     }
 
     #[test]
-    fn checkcond_nz_fails_drains_queue() {
+    fn checkcond_nz_fails_when_z_set() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::JumpRel { offset: 5 },
-            MicroOp::JumpRel { offset: 10 },
-        ]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(!cpu.condition_taken, "NZ should fail when Z is set");
     }
 
     #[test]
     fn checkcond_z_passes_when_z_set() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1);
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(cpu.condition_taken, "Z should pass when Z is set");
     }
 
     #[test]
     fn checkcond_z_fails_when_z_clear() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(!cpu.condition_taken, "Z should fail when Z is clear");
     }
 
     #[test]
     fn checkcond_nc_passes_when_c_clear() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NC });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1);
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(cpu.condition_taken);
     }
 
     #[test]
     fn checkcond_nc_fails_when_c_set() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NC });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(!cpu.condition_taken);
     }
 
     #[test]
     fn checkcond_c_passes_when_c_set() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1);
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(cpu.condition_taken);
     }
 
     #[test]
     fn checkcond_c_fails_when_c_clear() {
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(!cpu.condition_taken);
     }
 
     #[test]
@@ -1514,92 +1438,16 @@ mod tests {
         // NZ should not care about C
         let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true); // Z=0, C=1
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1, "NZ should pass regardless of C");
-        } else {
-            panic!("Expected Execute state");
-        }
+        assert!(cpu.condition_taken, "NZ should pass regardless of C");
 
         // C should not care about Z
         let (mut cpu2, mut bus2) = make_cpu();
         set_flags(&mut cpu2, true, false, false, true); // Z=1, C=1
-        cpu2.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
+        cpu2.condition_taken = true;
         execute(&mut cpu2, &mut bus2, MicroOp::CheckCond { cond: Condition::C });
-        if let PipelineState::Execute(ref ops) = cpu2.state {
-            assert_eq!(ops.len(), 1, "C should pass regardless of Z");
-        } else {
-            panic!("Expected Execute state");
-        }
-    }
-
-    // =====================================================================
-    //  CheckCond — PC skip on failed condition
-    // =====================================================================
-
-    #[test]
-    fn checkcond_fail_skips_1_byte_for_jr() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.register_file.set_16bit(Reg16::PC, 0x1000);
-        set_flags(&mut cpu, true, false, false, false); // Z=1 → NZ fails
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::JumpRelImm,
-        ]));
-        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x1001,
-            "failed JR NZ must skip 1-byte offset");
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        }
-    }
-
-    #[test]
-    fn checkcond_fail_skips_2_bytes_for_jp() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.register_file.set_16bit(Reg16::PC, 0x2000);
-        set_flags(&mut cpu, true, false, false, false); // Z=1 → NZ fails
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::JumpAbsImm,
-        ]));
-        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x2002,
-            "failed JP NZ must skip 2-byte address");
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        }
-    }
-
-    #[test]
-    fn checkcond_fail_skips_2_bytes_for_call() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.register_file.set_16bit(Reg16::PC, 0x3000);
-        set_flags(&mut cpu, false, false, false, false); // Z=0 → Z fails
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::CallImm,
-        ]));
-        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x3002,
-            "failed CALL Z must skip 2-byte address");
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        }
-    }
-
-    #[test]
-    fn checkcond_fail_skips_0_bytes_for_ret() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.register_file.set_16bit(Reg16::PC, 0x4000);
-        set_flags(&mut cpu, false, false, false, false); // C=0 → C fails
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::Ret,
-        ]));
-        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x4000,
-            "failed RET C must not change PC");
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert!(ops.is_empty());
-        }
+        assert!(cpu2.condition_taken, "C should pass regardless of Z");
     }
 
     #[test]
@@ -1607,15 +1455,11 @@ mod tests {
         let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x5000);
         set_flags(&mut cpu, false, false, false, false); // Z=0 → NZ passes
-        cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
-            MicroOp::JumpRelImm,
-        ]));
+        cpu.condition_taken = true;
         execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x5000,
             "passed condition must not touch PC");
-        if let PipelineState::Execute(ref ops) = cpu.state {
-            assert_eq!(ops.len(), 1, "passed condition must preserve queue");
-        }
+        assert!(cpu.condition_taken);
     }
 
     // =====================================================================
@@ -1908,67 +1752,65 @@ mod tests {
     fn trigger_halt() {
         let (mut cpu, mut bus) = make_cpu();
         execute(&mut cpu, &mut bus, MicroOp::TriggerHalt);
-        assert!(matches!(cpu.state, PipelineState::Halted));
+        assert!(cpu.halted);
     }
 
     #[test]
     fn trigger_stop() {
         let (mut cpu, mut bus) = make_cpu();
         execute(&mut cpu, &mut bus, MicroOp::TriggerStop);
-        assert!(matches!(cpu.state, PipelineState::Halted));
+        assert!(cpu.halted);
     }
 
     // =====================================================================
-    //  CheckInterrupts
+    //  Interrupts (tested via cpu.tick())
     // =====================================================================
 
     #[test]
     fn interrupts_noop_when_ime_off() {
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = false;
         cpu.register_file.set_8bit(Reg8::IE, 0x01);
         bus.write(0xFF0F, 0x01);
+        // Put a NOP at PC=0 so tick has something to execute
+        bus.write(0x0000, 0x00);
         let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
+        cpu.tick(&mut bus);
+        // Should have executed NOP, not dispatched interrupt
+        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc + 1);
     }
 
     #[test]
     fn interrupts_noop_when_none_pending() {
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x1F);
         bus.write(0xFF0F, 0x00);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
-        let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
+        bus.write(0x0000, 0x00); // NOP
+        cpu.tick(&mut bus);
+        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0001);
         assert!(cpu.ime);
     }
 
     #[test]
-    fn interrupts_noop_when_enabled_not_requested() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x01); // VBlank enabled
-        bus.write(0xFF0F, 0x02);     // LCDStat pending
-        cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
-        let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
-    }
-
-    #[test]
     fn interrupts_services_vblank() {
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x01);
         bus.write(0xFF0F, 0x01);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x1234);
 
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+        let t = cpu.tick(&mut bus);
 
+        assert_eq!(t, 20, "interrupt dispatch should take 20 T-cycles");
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040);
         assert!(!cpu.ime);
         assert_eq!(bus.read(0xFF0F), 0x00);
@@ -1980,32 +1822,37 @@ mod tests {
 
     #[test]
     fn interrupts_services_timer() {
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x04);
         bus.write(0xFF0F, 0x04);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+        cpu.tick(&mut bus);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0050);
         assert_eq!(bus.read(0xFF0F), 0x00);
     }
 
     #[test]
     fn interrupts_priority_lowest_bit_wins() {
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x05); // VBlank + Timer
         bus.write(0xFF0F, 0x05);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+        cpu.tick(&mut bus);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040); // VBlank wins
         assert_eq!(bus.read(0xFF0F), 0x04); // Timer still pending
     }
 
     #[test]
     fn interrupts_all_five_vectors() {
+        use crate::cpu::CPU;
         let cases: [(u8, u16); 5] = [
             (0x01, 0x0040), // VBlank
             (0x02, 0x0048), // LCDStat
@@ -2014,13 +1861,14 @@ mod tests {
             (0x10, 0x0060), // Joypad
         ];
         for (mask, vector) in cases {
-            let (mut cpu, mut bus) = make_cpu();
+            let mut cpu = CPU::new(crate::trace::Tracer::off());
+            let mut bus = Bus::new();
             cpu.ime = true;
             cpu.register_file.set_8bit(Reg8::IE, mask);
             bus.write(0xFF0F, mask);
             cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-            execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+            cpu.tick(&mut bus);
             assert_eq!(
                 cpu.register_file.get_16bit(Reg16::PC), vector,
                 "Interrupt {:#04X} → {:#06X}", mask, vector
@@ -2030,41 +1878,31 @@ mod tests {
 
     #[test]
     fn interrupts_clears_only_serviced_bit() {
-        // All 5 pending, only service VBlank (lowest priority bit)
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x1F);
         bus.write(0xFF0F, 0x1F);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+        cpu.tick(&mut bus);
         assert_eq!(bus.read(0xFF0F), 0x1E); // only bit 0 cleared
     }
 
     #[test]
     fn interrupts_ignores_upper_bits_of_if() {
-        // Bits 5-7 of IF should be masked out
-        let (mut cpu, mut bus) = make_cpu();
+        use crate::cpu::CPU;
+        let mut cpu = CPU::new(crate::trace::Tracer::off());
+        let mut bus = Bus::new();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x00); // nothing enabled
         bus.write(0xFF0F, 0xE0);     // only upper bits set
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
-        let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-
-        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
-        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
-    }
-
-    // =====================================================================
-    //  FetchOpcode
-    // =====================================================================
-
-    #[test]
-    fn fetch_opcode_transitions_to_fetch() {
-        let (mut cpu, mut bus) = make_cpu();
-        cpu.state = PipelineState::Execute(MicrocodeQueue::new());
-        execute(&mut cpu, &mut bus, MicroOp::FetchOpcode);
-        assert!(matches!(cpu.state, PipelineState::Fetch));
+        bus.write(0x0000, 0x00); // NOP
+        cpu.tick(&mut bus);
+        // No interrupt dispatched, NOP executed
+        assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0001);
     }
 
     // =====================================================================

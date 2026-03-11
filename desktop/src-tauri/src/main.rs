@@ -113,6 +113,12 @@ fn toggle_trace(emu: State<Emulator>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn drain_audio_samples(emu: State<Emulator>) -> Vec<f32> {
+    let mut session = emu.0.lock().unwrap();
+    session.drain_audio_samples()
+}
+
+#[tauri::command]
 fn reset(emu: State<Emulator>) {
     let mut session = emu.0.lock().unwrap();
     if let Some(gb) = session.gameboy_mut() {
@@ -133,6 +139,7 @@ fn main() {
             get_state,
             read_memory,
             toggle_trace,
+            drain_audio_samples,
             reset,
         ])
         .run(tauri::generate_context!())

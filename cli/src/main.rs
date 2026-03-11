@@ -3,8 +3,11 @@ use sm83::clock::ClockGovernor;
 use sm83::memory::bus::Bus;
 use sm83::system::GameBoy;
 use sm83::trace::Tracer;
+use std::sync::{Arc, Mutex};
 use std::{env, fs, path::Path, process, thread};
 use std::time::{Duration, Instant, SystemTime};
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 #[derive(Deserialize)]
 struct Config {
@@ -29,11 +32,94 @@ fn load_file(path: &Path) -> Vec<u8> {
     })
 }
 
+/// Simple thread-safe ring buffer for passing audio between emulation and cpal.
+struct AudioRing {
+    buf: Vec<f32>,
+    read_pos: usize,
+    write_pos: usize,
+    count: usize,
+}
+
+impl AudioRing {
+    fn new(capacity: usize) -> Self {
+        Self {
+            buf: vec![0.0; capacity],
+            read_pos: 0,
+            write_pos: 0,
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, samples: &[f32]) {
+        let cap = self.buf.len();
+        for &s in samples {
+            if self.count < cap {
+                self.buf[self.write_pos] = s;
+                self.write_pos = (self.write_pos + 1) % cap;
+                self.count += 1;
+            }
+        }
+    }
+
+    fn pop(&mut self) -> Option<f32> {
+        if self.count == 0 {
+            return None;
+        }
+        let val = self.buf[self.read_pos];
+        self.read_pos = (self.read_pos + 1) % self.buf.len();
+        self.count -= 1;
+        Some(val)
+    }
+}
+
+fn start_audio() -> Arc<Mutex<AudioRing>> {
+    let ring = Arc::new(Mutex::new(AudioRing::new(16384)));
+    let ring_clone = ring.clone();
+
+    let host = cpal::default_host();
+    let device = host.default_output_device().unwrap_or_else(|| {
+        eprintln!("no audio output device found");
+        process::exit(1);
+    });
+
+    let config = cpal::StreamConfig {
+        channels: 2,
+        sample_rate: cpal::SampleRate(48000),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
+    let stream = device.build_output_stream(
+        &config,
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            let mut ring = ring_clone.lock().unwrap();
+            for sample in data.iter_mut() {
+                *sample = ring.pop().unwrap_or(0.0);
+            }
+        },
+        |err| eprintln!("audio stream error: {}", err),
+        None,
+    ).unwrap_or_else(|e| {
+        eprintln!("couldn't build audio stream: {}", e);
+        process::exit(1);
+    });
+
+    stream.play().unwrap_or_else(|e| {
+        eprintln!("couldn't start audio stream: {}", e);
+        process::exit(1);
+    });
+
+    // Leak the stream so it lives for the program's lifetime
+    std::mem::forget(stream);
+
+    ring
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let debug = args.iter().any(|a| a == "--debug" || a == "-d");
     let uncapped = args.iter().any(|a| a == "--uncapped" || a == "-u");
     let bench = args.iter().any(|a| a == "--bench" || a == "-b");
+    let mute = args.iter().any(|a| a == "--mute" || a == "-m");
     let cart_override = args.iter().find(|a| !a.starts_with('-'));
 
     let config = load_config();
@@ -66,6 +152,12 @@ fn main() {
     bus.load_cartridge(&cartridge);
 
     let mut gb = GameBoy::new(bus, tracer);
+
+    let audio_ring = if !mute && !bench && !uncapped {
+        Some(start_audio())
+    } else {
+        None
+    };
 
     if bench {
         // Benchmark: run governed for 5 seconds, report accuracy.
@@ -134,8 +226,12 @@ fn main() {
         loop { gb.tick(); }
     } else {
         eprintln!("running at 2^22 Hz (4,194,304 T-cycles/s)");
+        if audio_ring.is_some() {
+            eprintln!("audio output: 48 kHz stereo (use --mute to disable)");
+        }
         let mut gov = ClockGovernor::new();
         let mut last = Instant::now();
+        let mut audio_samples = Vec::new();
         loop {
             let now = Instant::now();
             let elapsed = now.duration_since(last);
@@ -144,6 +240,16 @@ fn main() {
             let cycles = gov.cycles_due(elapsed.as_nanos() as u64);
             if cycles > 0 {
                 gb.tick_t(cycles);
+
+                // Drain audio samples from the APU and push to the audio ring
+                if let Some(ref ring) = audio_ring {
+                    gb.bus.apu.drain_audio_samples(&mut audio_samples);
+                    if !audio_samples.is_empty() {
+                        let mut ring = ring.lock().unwrap();
+                        ring.push(&audio_samples);
+                        audio_samples.clear();
+                    }
+                }
             } else {
                 thread::sleep(Duration::from_micros(100));
             }

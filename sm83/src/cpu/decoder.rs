@@ -130,6 +130,21 @@ macro_rules! gen_m_cycles {
 gen_m_cycles!(M_CYCLES, T_CYCLES);
 gen_m_cycles!(CB_M_CYCLES, CB_T_CYCLES);
 
+/// T-cycle counts for conditional instructions when the branch IS taken.
+/// Non-conditional opcodes have the same value as T_CYCLES.
+const TAKEN_T_CYCLES: [u8; 256] = {
+    let mut t = T_CYCLES;
+    // JR cc (taken = 12, not-taken = 8)
+    t[0x20] = 12; t[0x28] = 12; t[0x30] = 12; t[0x38] = 12;
+    // RET cc (taken = 20, not-taken = 8)
+    t[0xC0] = 20; t[0xC8] = 20; t[0xD0] = 20; t[0xD8] = 20;
+    // JP cc (taken = 16, not-taken = 12)
+    t[0xC2] = 16; t[0xCA] = 16; t[0xD2] = 16; t[0xDA] = 16;
+    // CALL cc (taken = 24, not-taken = 12)
+    t[0xC4] = 24; t[0xCC] = 24; t[0xD4] = 24; t[0xDC] = 24;
+    t
+};
+
 macro_rules! gen_cycles_lookup {
     ($fn_name:ident, $table:ident) => {
         #[inline(always)]
@@ -139,16 +154,16 @@ macro_rules! gen_cycles_lookup {
     };
 }
 
-gen_cycles_lookup!(t_cycles,    T_CYCLES);
-gen_cycles_lookup!(cb_t_cycles, CB_T_CYCLES);
-gen_cycles_lookup!(m_cycles,    M_CYCLES);
-gen_cycles_lookup!(cb_m_cycles, CB_M_CYCLES);
+gen_cycles_lookup!(t_cycles,       T_CYCLES);
+gen_cycles_lookup!(taken_t_cycles, TAKEN_T_CYCLES);
+gen_cycles_lookup!(cb_t_cycles,    CB_T_CYCLES);
+gen_cycles_lookup!(m_cycles,       M_CYCLES);
+gen_cycles_lookup!(cb_m_cycles,    CB_M_CYCLES);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cpu::CPU;
-    use crate::cpu::pipeline::PipelineState;
     use crate::memory::bus::Bus;
 
     // =====================================================================
@@ -188,7 +203,7 @@ mod tests {
     #[test]
     fn decode_all_base_opcodes() {
         for opcode in 0u8..=255 {
-            if opcode == 0xCB || UNDEFINED_OPCODES.contains(&opcode) { continue; }
+            if opcode == 0xCB { continue; }
             let _ops = decode_instruction(opcode);
         }
     }
@@ -212,10 +227,15 @@ mod tests {
     }
 
     #[test]
-    fn undefined_opcodes_all_panic() {
+    fn undefined_opcodes_lock_cpu() {
+        use crate::cpu::microcode::MicroOp;
         for &op in &UNDEFINED_OPCODES {
-            let result = std::panic::catch_unwind(|| decode_instruction(op));
-            assert!(result.is_err(), "0x{:02X} should panic", op);
+            let ops = decode_instruction(op);
+            assert!(
+                ops.iter().any(|o| matches!(o, MicroOp::TriggerHalt)),
+                "0x{:02X} should emit TriggerHalt",
+                op
+            );
         }
     }
 
@@ -1136,7 +1156,7 @@ mod tests {
         // PC should have advanced past the second byte
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC001);
         // CPU should be halted
-        assert!(matches!(cpu.state, PipelineState::Halted));
+        assert!(cpu.halted);
     }
 }
 
@@ -1448,8 +1468,9 @@ pub fn decode_instruction(opcode: u8) -> MicrocodeQueue {
         0xFB => MicrocodeQueue::from_iter([MicroOp::DeferImeEnable]),
 
         // Undefined opcodes (0xD3, 0xDB, 0xDD, 0xE3, 0xE4, 0xEB, 0xEC, 0xED, 0xF4, 0xFC, 0xFD)
+        // Real SM83 locks up on these. Lock the CPU rather than panicking.
         0xD3 | 0xDB | 0xDD | 0xE3 | 0xE4 | 0xEB | 0xEC | 0xED | 0xF4 | 0xFC | 0xFD =>
-            panic!("Undefined opcode: 0x{:02X}", opcode),
+            MicrocodeQueue::from_iter([MicroOp::TriggerHalt]),
     }
 }
 

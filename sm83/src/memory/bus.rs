@@ -1,3 +1,4 @@
+use crate::apu::Apu;
 use crate::timer::{self, Timer};
 
 const BOOT_ROM_SIZE: usize = 0x100;
@@ -17,6 +18,7 @@ pub struct Bus {
     hram: [u8; 0x7F],
     interrupt_enable_register: u8,
     pub timer: Timer,
+    pub apu: Apu,
 }
 
 impl Bus {
@@ -34,6 +36,7 @@ impl Bus {
             hram: [0; 0x7F],
             interrupt_enable_register: 0,
             timer: Timer::new(),
+            apu: Apu::new(),
         }
     }
 
@@ -66,6 +69,11 @@ impl Bus {
         matches!(addr, timer::DIV_ADDR..=timer::TAC_ADDR)
     }
 
+    /// Returns true if the address belongs to the APU (FF10-FF3F).
+    fn is_apu_addr(addr: u16) -> bool {
+        matches!(addr, 0xFF10..=0xFF3F)
+    }
+
     pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
@@ -76,6 +84,7 @@ impl Bus {
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000],
             0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00],
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.read(addr),
+            0xFF00..=0xFF7F if Self::is_apu_addr(addr) => self.apu.read(addr),
             0xFF00..=0xFF7F => self.io_registers[addr as usize - 0xFF00],
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80],
             0xFFFF => self.interrupt_enable_register,
@@ -92,6 +101,7 @@ impl Bus {
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000] = value,
             0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00] = value,
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.write(addr, value),
+            0xFF00..=0xFF7F if Self::is_apu_addr(addr) => self.apu.write(addr, value),
             0xFF00..=0xFF7F => {
                 if addr == BOOT_ROM_UNMAP && value & 1 != 0 {
                     self.boot_rom_mapped = false;

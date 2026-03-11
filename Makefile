@@ -7,7 +7,7 @@ run: build
 	cargo run --release -p fragile-canvas
 
 debug: build
-	cargo run --release -p fragile-canvas -- --debug
+	cargo run --release -p fragile-canvas -- --debug --mute
 
 test:
 	cargo test -p sm83

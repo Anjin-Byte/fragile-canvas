@@ -91,4 +91,11 @@ impl EmulatorWasm {
     pub fn reset(&mut self) {
         self.session.reset();
     }
+
+    /// Drain buffered audio samples as interleaved f32 (L,R,L,R...).
+    /// Returns a Float32Array for direct use with Web Audio API.
+    #[wasm_bindgen(js_name = drainAudioSamples)]
+    pub fn drain_audio_samples(&mut self) -> Vec<f32> {
+        self.session.drain_audio_samples()
+    }
 }

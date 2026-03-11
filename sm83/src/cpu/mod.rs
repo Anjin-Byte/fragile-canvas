@@ -2,19 +2,24 @@ pub mod alu;
 pub mod decoder;
 pub mod interrupts;
 pub mod microcode;
-pub mod pipeline;
 pub mod registers;
 
 use crate::memory::bus::Bus;
 use crate::trace::Tracer;
-use pipeline::PipelineState;
-use registers::{Reg16, RegisterFile};
+use registers::{Reg8, Reg16, RegisterFile};
+
+/// Interrupt dispatch takes 5 M-cycles = 20 T-cycles on the SM83.
+const INTERRUPT_T_CYCLES: u8 = 20;
 
 pub struct CPU {
     pub register_file: RegisterFile,
-    pub state: PipelineState,
+    pub halted: bool,
     pub ime: bool,
     pub ime_defer: bool,
+    /// Set to false by CheckCond when the condition fails.
+    /// The tick loop uses this to stop executing remaining micro-ops
+    /// and to choose taken vs not-taken cycle counts.
+    pub condition_taken: bool,
     pub tracer: Tracer,
 }
 
@@ -22,65 +27,124 @@ impl CPU {
     pub fn new(tracer: Tracer) -> Self {
         Self {
             register_file: RegisterFile::new(),
-            state: PipelineState::Fetch,
+            halted: false,
             ime: false,
             ime_defer: false,
+            condition_taken: true,
             tracer,
         }
     }
 
-    pub fn tick(&mut self, bus: &mut Bus) {
-        match &mut self.state {
-            PipelineState::Fetch => {
+    /// Execute one full instruction and return the number of T-cycles consumed.
+    ///
+    /// On a real SM83, fetch + decode happens in 1 M-cycle, and every
+    /// additional memory access or internal operation is 1 more M-cycle.
+    /// We execute all micro-ops at once and use the lookup table for the
+    /// authoritative cycle count.
+    pub fn tick(&mut self, bus: &mut Bus) -> u8 {
+        // 1. Check for pending interrupts (runs before instruction fetch).
+        //    An interrupt wakes the CPU from HALT regardless of IME.
+        let ie = self.register_file.get_8bit(Reg8::IE);
+        let if_reg = bus.read(0xFF0F);
+        let pending = ie & if_reg & 0x1F;
+
+        if pending != 0 {
+            self.halted = false;
+
+            if self.ime {
+                // Service highest-priority (lowest bit) interrupt.
+                let bit = pending.trailing_zeros() as u8;
+                let vector = 0x0040 + (bit as u16) * 0x08;
+
+                bus.write(0xFF0F, if_reg & !(1 << bit));
+                self.ime = false;
+
+                // Push PC and jump to vector.
                 let pc = self.register_file.get_16bit(Reg16::PC);
-                let opcode = bus.read(pc);
-                self.register_file.inc16(Reg16::PC);
-                self.state = PipelineState::Decode(opcode);
+                let [hi, lo] = pc.to_be_bytes();
+                self.register_file.dec16(Reg16::SP);
+                let sp = self.register_file.get_16bit(Reg16::SP);
+                bus.write(sp, hi);
+                self.register_file.dec16(Reg16::SP);
+                let sp = self.register_file.get_16bit(Reg16::SP);
+                bus.write(sp, lo);
+
+                self.register_file.set_16bit(Reg16::PC, vector);
+                return INTERRUPT_T_CYCLES;
             }
-            PipelineState::Decode(opcode) => {
-                let micro_ops = if *opcode == 0xCB {
-                    let pc = self.register_file.get_16bit(Reg16::PC);
-                    let cb_code = bus.read(pc);
-                    self.register_file.inc16(Reg16::PC);
-                    let ops = decoder::decode_cb_instruction(cb_code);
-                    if self.tracer.enabled() {
-                        self.tracer.instruction(
-                            &self.register_file,
-                            &format!("CB {:02X}", cb_code),
-                            &ops,
-                        );
-                    }
-                    ops
-                } else {
-                    let ops = decoder::decode_instruction(*opcode);
-                    if self.tracer.enabled() {
-                        self.tracer.instruction(
-                            &self.register_file,
-                            &format!("{:02X}", *opcode),
-                            &ops,
-                        );
-                    }
-                    ops
-                };
-                self.state = PipelineState::Execute(micro_ops);
+        }
+
+        // 2. If halted (and no interrupt woke us), burn 1 M-cycle.
+        if self.halted {
+            return 4;
+        }
+
+        // 3. Fetch opcode.
+        let pc = self.register_file.get_16bit(Reg16::PC);
+        let opcode = bus.read(pc);
+        self.register_file.inc16(Reg16::PC);
+
+        // 4. Decode (CB prefix reads a second byte).
+        let (ops, cb_opcode) = if opcode == 0xCB {
+            let pc2 = self.register_file.get_16bit(Reg16::PC);
+            let cb_code = bus.read(pc2);
+            self.register_file.inc16(Reg16::PC);
+            let ops = decoder::decode_cb_instruction(cb_code);
+            if self.tracer.enabled() {
+                self.tracer.instruction(
+                    &self.register_file,
+                    &format!("CB {:02X}", cb_code),
+                    &ops,
+                );
             }
-            PipelineState::Execute(ops) => {
-                if !ops.is_empty() {
-                    let op = ops.remove(0);
-                    microcode::execute(self, bus, op);
-                } else {
-                    self.state = PipelineState::Fetch;
+            (ops, Some(cb_code))
+        } else {
+            let ops = decoder::decode_instruction(opcode);
+            if self.tracer.enabled() {
+                self.tracer.instruction(
+                    &self.register_file,
+                    &format!("{:02X}", opcode),
+                    &ops,
+                );
+            }
+            (ops, None)
+        };
+
+        // 5. Execute all micro-ops.
+        self.condition_taken = true;
+        for i in 0..ops.len() {
+            microcode::execute(self, bus, ops[i]);
+            if !self.condition_taken {
+                // Condition failed — skip unread immediates in the remaining ops.
+                let skip: u16 = ops[i+1..].iter().map(|op| match op {
+                    microcode::MicroOp::JumpRelImm => 1,
+                    microcode::MicroOp::JumpAbsImm | microcode::MicroOp::CallImm => 2,
+                    _ => 0,
+                }).sum();
+                if skip > 0 {
+                    let cur_pc = self.register_file.get_16bit(Reg16::PC);
+                    self.register_file.set_16bit(Reg16::PC, cur_pc.wrapping_add(skip));
                 }
+                break;
             }
-            PipelineState::InterruptService(ops) => {
-                if !ops.is_empty() {
-                    let op = ops.remove(0);
-                    microcode::execute(self, bus, op);
-                } else {
-                    self.state = PipelineState::Fetch;
-                }
-            }
-            PipelineState::Halted => {}
+        }
+
+        // 6. Handle EI deferred IME enable.
+        //    EI sets ime_defer; IME becomes true after the *next* instruction.
+        //    We check *before* promoting so the instruction after EI still
+        //    executes with IME off, and the one after that sees IME on.
+        if self.ime_defer {
+            self.ime_defer = false;
+            self.ime = true;
+        }
+
+        // 7. Return authoritative T-cycle count from lookup table.
+        if let Some(cb) = cb_opcode {
+            decoder::cb_t_cycles(cb)
+        } else if self.condition_taken {
+            decoder::taken_t_cycles(opcode)
+        } else {
+            decoder::t_cycles(opcode)
         }
     }
 }
@@ -184,13 +248,13 @@ mod boot_rom_tests {
     }
 
     fn tick_until(cpu: &mut CPU, bus: &mut Bus, pc: u16) -> u64 {
-        for t in 0..MAX_TICKS {
-            if matches!(cpu.state, PipelineState::Fetch)
-                && cpu.register_file.get_16bit(Reg16::PC) == pc
-            {
-                return t;
+        let mut total_t: u64 = 0;
+        for _ in 0..MAX_TICKS {
+            if cpu.register_file.get_16bit(Reg16::PC) == pc {
+                return total_t;
             }
-            cpu.tick(bus);
+            let t = cpu.tick(bus);
+            total_t += t as u64;
             bus.write(0xFF44, 0x90);
         }
         panic!("CPU did not reach PC={:#06X} within {} ticks", pc, MAX_TICKS);
