@@ -9,7 +9,6 @@ use crate::clock::ClockGovernor;
 use crate::cpu::pipeline::PipelineState;
 use crate::cpu::registers::{Reg8, Reg16};
 use crate::memory::bus::Bus;
-use crate::memory::mmu::MMU;
 use crate::system::GameBoy;
 use crate::trace::Tracer;
 
@@ -57,10 +56,10 @@ impl Session {
 
     /// Load a cartridge ROM (with the built-in boot ROM).
     pub fn load_rom(&mut self, cart_rom: &[u8]) -> CpuSnapshot {
-        let mut mmu = MMU::new();
-        mmu.load_boot_rom(crate::BOOT_ROM).unwrap();
-        mmu.load_cartridge(cart_rom);
-        let gb = GameBoy::new(mmu, Tracer::off());
+        let mut bus = Bus::new();
+        bus.load_boot_rom(crate::BOOT_ROM).unwrap();
+        bus.load_cartridge(cart_rom);
+        let gb = GameBoy::new(bus, Tracer::off());
         let snap = snapshot(&gb);
         self.gb = Some(gb);
         self.gov = ClockGovernor::new();
@@ -100,7 +99,7 @@ impl Session {
     pub fn read_memory(&self, addr: u16, length: u16) -> Result<Vec<u8>, &'static str> {
         let gb = self.gb.as_ref().ok_or("no ROM loaded")?;
         let end = addr.saturating_add(length);
-        Ok((addr..end).map(|a| gb.cpu.bus.read(a)).collect())
+        Ok((addr..end).map(|a| gb.bus.read(a)).collect())
     }
 
     /// Reset the governor accumulator (call after pause/resume).

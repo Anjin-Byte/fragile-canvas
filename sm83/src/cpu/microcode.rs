@@ -174,7 +174,7 @@ pub enum MicroOp {
     CheckInterrupts,
 }
 
-pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
+pub fn execute(cpu: &mut CPU, bus: &mut Bus, op: MicroOp) {
     match op {
         // Memory & Register Access ---------------------------------------------------
         MicroOp::LoadReg8 { dst, src } => {
@@ -187,17 +187,17 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::ReadImmediate8 { into } => {
             let pc_addr = cpu.register_file.get_16bit(Reg16::PC);
-            let imm = cpu.bus.read(pc_addr);
+            let imm = bus.read(pc_addr);
             cpu.register_file.inc16(Reg16::PC);
             cpu.register_file.set_8bit(into, imm);
         },
         MicroOp::ReadImmediate16 { into } => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
+            let lo = bus.read(pc);
             cpu.register_file.inc16(Reg16::PC);
     
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let hi = cpu.bus.read(pc);
+            let hi = bus.read(pc);
             cpu.register_file.inc16(Reg16::PC);
 
             let value = u16::from_le_bytes([lo, hi]);
@@ -205,33 +205,33 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::ReadMemReg8 { addr_reg, into }  => {
             let address = cpu.register_file.get_16bit(addr_reg);
-            let value = cpu.bus.read(address);
+            let value = bus.read(address);
             cpu.register_file.set_8bit(into, value);
         },
         MicroOp::ReadMemImm8 { addr, into } => {
-            let value = cpu.bus.read(addr);
+            let value = bus.read(addr);
             cpu.register_file.set_8bit(into, value);
         },
         MicroOp::ReadHighPage { offset, into } => {
             let off_val = cpu.register_file.get_8bit(offset) as u16;  
             let addr = 0xFF00_u16.wrapping_add(off_val);
-            let value = cpu.bus.read(addr);                  
+            let value = bus.read(addr);                  
             cpu.register_file.set_8bit(into, value);                        
         },
         MicroOp::WriteMemReg8 { addr_reg, src } => {
             let addr = cpu.register_file.get_16bit(addr_reg);
             let value = cpu.register_file.get_8bit(src);
-            cpu.bus.write(addr, value);
+            bus.write(addr, value);
         },        
         MicroOp::WriteMemImm8 { addr, src } => {
             let value = cpu.register_file.get_8bit(src);
-            cpu.bus.write(addr, value);
+            bus.write(addr, value);
         },
         MicroOp::WriteHighPage { offset, src } => {
             let offset_val = cpu.register_file.get_8bit(offset);              
             let addr = 0xFF00u16.wrapping_add(offset_val as u16);              
             let value = cpu.register_file.get_8bit(src);                     
-            cpu.bus.write(addr, value);                              
+            bus.write(addr, value);                              
         },
 
         // Stack Operations -------------------------------------------------------------
@@ -241,19 +241,19 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             cpu.register_file.dec16(Reg16::SP);
 
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, high);
+            bus.write(sp, high);
             cpu.register_file.dec16(Reg16::SP);
 
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, low);
+            bus.write(sp, low);
         },
         MicroOp::Pop { dst } => {
             let sp_addr = cpu.register_file.get_16bit(Reg16::SP);
-            let low = cpu.bus.read(sp_addr);
+            let low = bus.read(sp_addr);
             cpu.register_file.inc16(Reg16::SP);
 
             let sp_addr = cpu.register_file.get_16bit(Reg16::SP);
-            let high = cpu.bus.read(sp_addr);
+            let high = bus.read(sp_addr);
             cpu.register_file.inc16(Reg16::SP);
 
             let value = u16::from_le_bytes([low, high]);
@@ -536,20 +536,20 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             let [hi, lo] = pc.to_be_bytes();
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, hi);
+            bus.write(sp, hi);
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, lo);
+            bus.write(sp, lo);
 
             cpu.register_file.set_16bit(Reg16::PC, addr);
         },
         MicroOp::Ret => {
             // Pop address from stack into PC
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            let lo = cpu.bus.read(sp);
+            let lo = bus.read(sp);
             cpu.register_file.inc16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            let hi = cpu.bus.read(sp);
+            let hi = bus.read(sp);
             cpu.register_file.inc16(Reg16::SP);
 
             let addr = u16::from_le_bytes([lo, hi]);
@@ -558,10 +558,10 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         MicroOp::RetI => {
             // Pop address from stack into PC, then enable IME
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            let lo = cpu.bus.read(sp);
+            let lo = bus.read(sp);
             cpu.register_file.inc16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            let hi = cpu.bus.read(sp);
+            let hi = bus.read(sp);
             cpu.register_file.inc16(Reg16::SP);
 
             let addr = u16::from_le_bytes([lo, hi]);
@@ -574,10 +574,10 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             let [hi, lo] = pc.to_be_bytes();
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, hi);
+            bus.write(sp, hi);
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, lo);
+            bus.write(sp, lo);
 
             cpu.register_file.set_16bit(Reg16::PC, addr);
         },
@@ -592,7 +592,7 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         // Compound Ops (read operands from PC) ----------------------------------------
         MicroOp::JumpRelImm => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let offset = cpu.bus.read(pc) as i8;
+            let offset = bus.read(pc) as i8;
             cpu.register_file.inc16(Reg16::PC);
             let new_pc = cpu.register_file.get_16bit(Reg16::PC);
             let new_pc = (new_pc as i16).wrapping_add(offset as i16) as u16;
@@ -600,8 +600,8 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::JumpAbsImm => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
-            let hi = cpu.bus.read(pc.wrapping_add(1));
+            let lo = bus.read(pc);
+            let hi = bus.read(pc.wrapping_add(1));
             cpu.register_file.set_16bit(Reg16::PC, u16::from_le_bytes([lo, hi]));
         },
         MicroOp::JumpHL => {
@@ -610,8 +610,8 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::CallImm => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
-            let hi = cpu.bus.read(pc.wrapping_add(1));
+            let lo = bus.read(pc);
+            let hi = bus.read(pc.wrapping_add(1));
             let target = u16::from_le_bytes([lo, hi]);
             // PC now points past the two address bytes
             let ret_addr = pc.wrapping_add(2);
@@ -619,15 +619,15 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             let [ret_hi, ret_lo] = ret_addr.to_be_bytes();
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, ret_hi);
+            bus.write(sp, ret_hi);
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, ret_lo);
+            bus.write(sp, ret_lo);
             cpu.register_file.set_16bit(Reg16::PC, target);
         },
         MicroOp::AddSpImm => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let e = cpu.bus.read(pc) as i8;
+            let e = bus.read(pc) as i8;
             cpu.register_file.inc16(Reg16::PC);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
             let result = sp.wrapping_add(e as i16 as u16);
@@ -639,7 +639,7 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::LoadHlSpImm => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let e = cpu.bus.read(pc) as i8;
+            let e = bus.read(pc) as i8;
             cpu.register_file.inc16(Reg16::PC);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
             let result = sp.wrapping_add(e as i16 as u16);
@@ -650,31 +650,31 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
         },
         MicroOp::ReadMem16BitAddr { into } => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
-            let hi = cpu.bus.read(pc.wrapping_add(1));
+            let lo = bus.read(pc);
+            let hi = bus.read(pc.wrapping_add(1));
             let addr = u16::from_le_bytes([lo, hi]);
-            let value = cpu.bus.read(addr);
+            let value = bus.read(addr);
             cpu.register_file.set_8bit(into, value);
             cpu.register_file.set_16bit(Reg16::PC, pc.wrapping_add(2));
         },
         MicroOp::WriteMem16BitAddr { src } => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
-            let hi = cpu.bus.read(pc.wrapping_add(1));
+            let lo = bus.read(pc);
+            let hi = bus.read(pc.wrapping_add(1));
             let addr = u16::from_le_bytes([lo, hi]);
             let value = cpu.register_file.get_8bit(src);
-            cpu.bus.write(addr, value);
+            bus.write(addr, value);
             cpu.register_file.set_16bit(Reg16::PC, pc.wrapping_add(2));
         },
         MicroOp::WriteSp16BitAddr => {
             let pc = cpu.register_file.get_16bit(Reg16::PC);
-            let lo = cpu.bus.read(pc);
-            let hi = cpu.bus.read(pc.wrapping_add(1));
+            let lo = bus.read(pc);
+            let hi = bus.read(pc.wrapping_add(1));
             let addr = u16::from_le_bytes([lo, hi]);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
             let [sp_lo, sp_hi] = sp.to_le_bytes();
-            cpu.bus.write(addr, sp_lo);
-            cpu.bus.write(addr.wrapping_add(1), sp_hi);
+            bus.write(addr, sp_lo);
+            bus.write(addr.wrapping_add(1), sp_hi);
             cpu.register_file.set_16bit(Reg16::PC, pc.wrapping_add(2));
         },
 
@@ -701,7 +701,7 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             if !cpu.ime { return; }
 
             let ie = cpu.register_file.get_8bit(Reg8::IE);
-            let if_reg = cpu.bus.read(0xFF0F);
+            let if_reg = bus.read(0xFF0F);
             let pending = ie & if_reg & 0x1F;
 
             if pending == 0 { return; }
@@ -711,7 +711,7 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             let vector = 0x0040 + (bit as u16) * 0x08;
 
             // Clear the IF bit for this interrupt
-            cpu.bus.write(0xFF0F, if_reg & !(1 << bit));
+            bus.write(0xFF0F, if_reg & !(1 << bit));
 
             // Disable IME
             cpu.ime = false;
@@ -721,10 +721,10 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
             let [hi, lo] = pc.to_be_bytes();
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, hi);
+            bus.write(sp, hi);
             cpu.register_file.dec16(Reg16::SP);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            cpu.bus.write(sp, lo);
+            bus.write(sp, lo);
 
             cpu.register_file.set_16bit(Reg16::PC, vector);
         },
@@ -735,18 +735,18 @@ pub fn execute<B: Bus>(cpu: &mut CPU<B>, op: MicroOp) {
 mod tests {
     use super::*;
     use crate::cpu::CPU;
-    use crate::memory::mmu::MMU;
+    use crate::memory::bus::Bus;
     use crate::cpu::decoder::MicrocodeQueue;
 
-    fn make_cpu() -> CPU<MMU> {
-        CPU::new(MMU::new(), crate::trace::Tracer::off())
+    fn make_cpu() -> (CPU, Bus) {
+        (CPU::new(crate::trace::Tracer::off()), Bus::new())
     }
 
-    fn set_flags(cpu: &mut CPU<MMU>, z: bool, n: bool, h: bool, c: bool) {
+    fn set_flags(cpu: &mut CPU, z: bool, n: bool, h: bool, c: bool) {
         cpu.register_file.set_8bit(Reg8::F, flags(z, n, h, c));
     }
 
-    fn read_flags(cpu: &CPU<MMU>) -> (bool, bool, bool, bool) {
+    fn read_flags(cpu: &CPU) -> (bool, bool, bool, bool) {
         let f = cpu.register_file.get_8bit(Reg8::F);
         (
             f & FLAG_Z != 0,
@@ -762,46 +762,46 @@ mod tests {
 
     #[test]
     fn rlc_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::B, 0x00);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::B, src: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::B, src: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn rlc_bit7_rotates_to_bit0_and_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn rlc_0xff_stays_0xff_carry_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn rlc_no_carry_when_bit7_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x02);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn rlc_different_dst_src() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::B, 0x85); // 1000_0101
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0B); // 0000_1011
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x85); // src unchanged
         assert_eq!(read_flags(&cpu), (false, false, false, true));
@@ -809,10 +809,10 @@ mod tests {
 
     #[test]
     fn rlc_clears_n_and_h_flags() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, true, true, true);
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
         let (_, n, h, _) = read_flags(&cpu);
         assert!(!n);
         assert!(!h);
@@ -821,9 +821,9 @@ mod tests {
     #[test]
     fn rlc_0x55() {
         // 0101_0101 → 1010_1010, C=0
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x55);
-        execute(&mut cpu, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rlc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xAA);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
@@ -834,36 +834,36 @@ mod tests {
 
     #[test]
     fn rrc_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn rrc_bit0_rotates_to_bit7_and_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn rrc_0xff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn rrc_even_number_no_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x02);
-        execute(&mut cpu, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
@@ -871,9 +871,9 @@ mod tests {
     #[test]
     fn rrc_0xaa() {
         // 1010_1010 → 0101_0101, C=0
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xAA);
-        execute(&mut cpu, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rrc { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x55);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
@@ -884,52 +884,52 @@ mod tests {
 
     #[test]
     fn rl_carry_in_zero_carry_out_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn rl_carry_in_feeds_bit0() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn rl_bit7_goes_to_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, true));
     }
 
     #[test]
     fn rl_full_chain_carry_in_and_out() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn rl_double_rotate() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x02);
-        execute(&mut cpu, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x04);
     }
 
@@ -939,30 +939,30 @@ mod tests {
 
     #[test]
     fn rr_carry_in_feeds_bit7() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn rr_bit0_goes_to_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, true));
     }
 
     #[test]
     fn rr_full_chain() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
@@ -970,13 +970,13 @@ mod tests {
     #[test]
     fn rr_carry_propagation() {
         // A=0x00, C=1 → A=0x80, C=0 → A=0x40, C=0
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         assert!(!read_flags(&cpu).3);
-        execute(&mut cpu, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Rr { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x40);
     }
 
@@ -986,9 +986,9 @@ mod tests {
 
     #[test]
     fn rlca_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x85); // 1000_0101
-        execute(&mut cpu, MicroOp::RlcA);
+        execute(&mut cpu, &mut bus, MicroOp::RlcA);
         // rotate left: bit7 -> carry and bit0
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0B); // 0000_1011
         let f = cpu.register_file.get_8bit(Reg8::F);
@@ -1000,18 +1000,18 @@ mod tests {
 
     #[test]
     fn rlca_zero_input_still_clears_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::RlcA);
+        execute(&mut cpu, &mut bus, MicroOp::RlcA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0, "all flags 0 including Z");
     }
 
     #[test]
     fn rrca_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::RrcA);
+        execute(&mut cpu, &mut bus, MicroOp::RrcA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         let f = cpu.register_file.get_8bit(Reg8::F);
         assert_ne!(f & FLAG_C, 0, "C should be set (old bit0 was 1)");
@@ -1020,19 +1020,19 @@ mod tests {
 
     #[test]
     fn rrca_zero_input_still_clears_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::RrcA);
+        execute(&mut cpu, &mut bus, MicroOp::RrcA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0);
     }
 
     #[test]
     fn rla_through_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80); // 1000_0000
         cpu.register_file.set_8bit(Reg8::F, FLAG_C); // carry in = 1
-        execute(&mut cpu, MicroOp::RlA);
+        execute(&mut cpu, &mut bus, MicroOp::RlA);
         // shift left, old carry into bit0, bit7 into carry
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         let f = cpu.register_file.get_8bit(Reg8::F);
@@ -1042,20 +1042,20 @@ mod tests {
 
     #[test]
     fn rla_zero_input_carry_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
         cpu.register_file.set_8bit(Reg8::F, 0);
-        execute(&mut cpu, MicroOp::RlA);
+        execute(&mut cpu, &mut bus, MicroOp::RlA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0, "all flags 0 including Z");
     }
 
     #[test]
     fn rra_through_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01); // 0000_0001
         cpu.register_file.set_8bit(Reg8::F, FLAG_C); // carry in = 1
-        execute(&mut cpu, MicroOp::RrA);
+        execute(&mut cpu, &mut bus, MicroOp::RrA);
         // shift right, old carry into bit7, bit0 into carry
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x80);
         let f = cpu.register_file.get_8bit(Reg8::F);
@@ -1065,10 +1065,10 @@ mod tests {
 
     #[test]
     fn rra_zero_input_carry_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
         cpu.register_file.set_8bit(Reg8::F, 0);
-        execute(&mut cpu, MicroOp::RrA);
+        execute(&mut cpu, &mut bus, MicroOp::RrA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0);
     }
@@ -1079,36 +1079,36 @@ mod tests {
 
     #[test]
     fn sla_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn sla_bit7_to_carry_result_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, true));
     }
 
     #[test]
     fn sla_0xff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFE);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn sla_no_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sla { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x02);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
@@ -1119,45 +1119,45 @@ mod tests {
 
     #[test]
     fn sra_preserves_bit7_when_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xC0);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn sra_preserves_bit7_when_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x7F);
-        execute(&mut cpu, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x3F);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn sra_0xff_stays_0xff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn sra_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn sra_negative_odd() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x81); // -127
-        execute(&mut cpu, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Sra { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xC0); // -64
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
@@ -1168,27 +1168,27 @@ mod tests {
 
     #[test]
     fn srl_clears_bit7() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x40);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn srl_0x01_becomes_zero_carry_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, true));
     }
 
     #[test]
     fn srl_0xff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Srl { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x7F);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
@@ -1199,55 +1199,55 @@ mod tests {
 
     #[test]
     fn swap_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         assert_eq!(read_flags(&cpu), (true, false, false, false));
     }
 
     #[test]
     fn swap_0xf0() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xF0);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0F);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn swap_0xa5() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xA5);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x5A);
     }
 
     #[test]
     fn swap_0xff_not_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn swap_clears_all_other_flags() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, true, true, true);
         cpu.register_file.set_8bit(Reg8::A, 0x12);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x21);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn swap_is_own_inverse() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x3C);
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
-        execute(&mut cpu, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::Swap { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x3C);
     }
 
@@ -1257,9 +1257,9 @@ mod tests {
 
     #[test]
     fn bit_test_set_bit_clears_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x80);
-        execute(&mut cpu, MicroOp::BitTest { bit: 7, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::BitTest { bit: 7, reg: Reg8::A });
         let (z, n, h, _) = read_flags(&cpu);
         assert!(!z);
         assert!(!n);
@@ -1268,9 +1268,9 @@ mod tests {
 
     #[test]
     fn bit_test_clear_bit_sets_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::BitTest { bit: 3, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::BitTest { bit: 3, reg: Reg8::A });
         let (z, _, h, _) = read_flags(&cpu);
         assert!(z);
         assert!(h);
@@ -1278,35 +1278,35 @@ mod tests {
 
     #[test]
     fn bit_test_preserves_carry_when_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::BitTest { bit: 0, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::BitTest { bit: 0, reg: Reg8::A });
         assert_eq!(read_flags(&cpu), (true, false, true, true));
     }
 
     #[test]
     fn bit_test_preserves_carry_when_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::BitTest { bit: 4, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::BitTest { bit: 4, reg: Reg8::A });
         assert_eq!(read_flags(&cpu), (false, false, true, false));
     }
 
     #[test]
     fn bit_test_every_position() {
         for bit in 0..8u8 {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             cpu.register_file.set_8bit(Reg8::B, 1 << bit);
-            execute(&mut cpu, MicroOp::BitTest { bit, reg: Reg8::B });
+            execute(&mut cpu, &mut bus, MicroOp::BitTest { bit, reg: Reg8::B });
             assert!(!read_flags(&cpu).0, "bit {} should be set", bit);
 
             for other in 0..8u8 {
                 if other == bit { continue; }
-                let mut cpu2 = make_cpu();
+                let (mut cpu2, mut bus2) = make_cpu();
                 cpu2.register_file.set_8bit(Reg8::B, 1 << bit);
-                execute(&mut cpu2, MicroOp::BitTest { bit: other, reg: Reg8::B });
+                execute(&mut cpu2, &mut bus2, MicroOp::BitTest { bit: other, reg: Reg8::B });
                 assert!(read_flags(&cpu2).0, "bit {} should be clear when only bit {} set", other, bit);
             }
         }
@@ -1319,54 +1319,54 @@ mod tests {
     #[test]
     fn set_bit_on_zero() {
         for bit in 0..8u8 {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             cpu.register_file.set_8bit(Reg8::A, 0x00);
-            execute(&mut cpu, MicroOp::SetBit { bit, reg: Reg8::A });
+            execute(&mut cpu, &mut bus, MicroOp::SetBit { bit, reg: Reg8::A });
             assert_eq!(cpu.register_file.get_8bit(Reg8::A), 1 << bit);
         }
     }
 
     #[test]
     fn set_bit_idempotent() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::SetBit { bit: 3, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::SetBit { bit: 3, reg: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
     }
 
     #[test]
     fn set_bit_does_not_change_flags() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, true, true, true);
         cpu.register_file.set_8bit(Reg8::B, 0x00);
-        execute(&mut cpu, MicroOp::SetBit { bit: 5, reg: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::SetBit { bit: 5, reg: Reg8::B });
         assert_eq!(read_flags(&cpu), (true, true, true, true));
     }
 
     #[test]
     fn reset_bit_clears_each() {
         for bit in 0..8u8 {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             cpu.register_file.set_8bit(Reg8::A, 0xFF);
-            execute(&mut cpu, MicroOp::ResetBit { bit, reg: Reg8::A });
+            execute(&mut cpu, &mut bus, MicroOp::ResetBit { bit, reg: Reg8::A });
             assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF & !(1 << bit));
         }
     }
 
     #[test]
     fn reset_bit_idempotent() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::ResetBit { bit: 7, reg: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::ResetBit { bit: 7, reg: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
     }
 
     #[test]
     fn reset_bit_does_not_change_flags() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, false, true);
         cpu.register_file.set_8bit(Reg8::B, 0xFF);
-        execute(&mut cpu, MicroOp::ResetBit { bit: 2, reg: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::ResetBit { bit: 2, reg: Reg8::B });
         assert_eq!(read_flags(&cpu), (false, true, false, true));
     }
 
@@ -1386,10 +1386,10 @@ mod tests {
             ("SRL",  MicroOp::Srl  { dst: Reg8::A, src: Reg8::A }),
         ];
         for (name, op) in ops {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             set_flags(&mut cpu, true, true, true, true);
             cpu.register_file.set_8bit(Reg8::A, 0x42);
-            execute(&mut cpu, op);
+            execute(&mut cpu, &mut bus, op);
             let (_, n, h, _) = read_flags(&cpu);
             assert!(!n, "{} must clear N", name);
             assert!(!h, "{} must clear H", name);
@@ -1402,12 +1402,12 @@ mod tests {
 
     #[test]
     fn checkcond_nz_passes_when_z_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::JumpRel { offset: 5 },
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert_eq!(ops.len(), 1);
         } else {
@@ -1417,13 +1417,13 @@ mod tests {
 
     #[test]
     fn checkcond_nz_fails_drains_queue() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::JumpRel { offset: 5 },
             MicroOp::JumpRel { offset: 10 },
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert!(ops.is_empty());
         } else {
@@ -1433,10 +1433,10 @@ mod tests {
 
     #[test]
     fn checkcond_z_passes_when_z_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::Z });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert_eq!(ops.len(), 1);
         } else {
@@ -1446,10 +1446,10 @@ mod tests {
 
     #[test]
     fn checkcond_z_fails_when_z_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::Z });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert!(ops.is_empty());
         } else {
@@ -1459,10 +1459,10 @@ mod tests {
 
     #[test]
     fn checkcond_nc_passes_when_c_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NC });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NC });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert_eq!(ops.len(), 1);
         } else {
@@ -1472,10 +1472,10 @@ mod tests {
 
     #[test]
     fn checkcond_nc_fails_when_c_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NC });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NC });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert!(ops.is_empty());
         } else {
@@ -1485,10 +1485,10 @@ mod tests {
 
     #[test]
     fn checkcond_c_passes_when_c_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::C });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert_eq!(ops.len(), 1);
         } else {
@@ -1498,10 +1498,10 @@ mod tests {
 
     #[test]
     fn checkcond_c_fails_when_c_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::C });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert!(ops.is_empty());
         } else {
@@ -1512,10 +1512,10 @@ mod tests {
     #[test]
     fn checkcond_ignores_irrelevant_flags() {
         // NZ should not care about C
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true); // Z=0, C=1
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         if let PipelineState::Execute(ref ops) = cpu.state {
             assert_eq!(ops.len(), 1, "NZ should pass regardless of C");
         } else {
@@ -1523,10 +1523,10 @@ mod tests {
         }
 
         // C should not care about Z
-        let mut cpu2 = make_cpu();
+        let (mut cpu2, mut bus2) = make_cpu();
         set_flags(&mut cpu2, true, false, false, true); // Z=1, C=1
         cpu2.state = PipelineState::Execute(MicrocodeQueue::from_iter([MicroOp::Ret]));
-        execute(&mut cpu2, MicroOp::CheckCond { cond: Condition::C });
+        execute(&mut cpu2, &mut bus2, MicroOp::CheckCond { cond: Condition::C });
         if let PipelineState::Execute(ref ops) = cpu2.state {
             assert_eq!(ops.len(), 1, "C should pass regardless of Z");
         } else {
@@ -1540,13 +1540,13 @@ mod tests {
 
     #[test]
     fn checkcond_fail_skips_1_byte_for_jr() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x1000);
         set_flags(&mut cpu, true, false, false, false); // Z=1 → NZ fails
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::JumpRelImm,
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x1001,
             "failed JR NZ must skip 1-byte offset");
         if let PipelineState::Execute(ref ops) = cpu.state {
@@ -1556,13 +1556,13 @@ mod tests {
 
     #[test]
     fn checkcond_fail_skips_2_bytes_for_jp() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x2000);
         set_flags(&mut cpu, true, false, false, false); // Z=1 → NZ fails
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::JumpAbsImm,
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x2002,
             "failed JP NZ must skip 2-byte address");
         if let PipelineState::Execute(ref ops) = cpu.state {
@@ -1572,13 +1572,13 @@ mod tests {
 
     #[test]
     fn checkcond_fail_skips_2_bytes_for_call() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x3000);
         set_flags(&mut cpu, false, false, false, false); // Z=0 → Z fails
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::CallImm,
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::Z });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::Z });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x3002,
             "failed CALL Z must skip 2-byte address");
         if let PipelineState::Execute(ref ops) = cpu.state {
@@ -1588,13 +1588,13 @@ mod tests {
 
     #[test]
     fn checkcond_fail_skips_0_bytes_for_ret() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x4000);
         set_flags(&mut cpu, false, false, false, false); // C=0 → C fails
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::Ret,
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::C });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::C });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x4000,
             "failed RET C must not change PC");
         if let PipelineState::Execute(ref ops) = cpu.state {
@@ -1604,13 +1604,13 @@ mod tests {
 
     #[test]
     fn checkcond_pass_does_not_alter_pc() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x5000);
         set_flags(&mut cpu, false, false, false, false); // Z=0 → NZ passes
         cpu.state = PipelineState::Execute(MicrocodeQueue::from_iter([
             MicroOp::JumpRelImm,
         ]));
-        execute(&mut cpu, MicroOp::CheckCond { cond: Condition::NZ });
+        execute(&mut cpu, &mut bus, MicroOp::CheckCond { cond: Condition::NZ });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x5000,
             "passed condition must not touch PC");
         if let PipelineState::Execute(ref ops) = cpu.state {
@@ -1624,24 +1624,24 @@ mod tests {
 
     #[test]
     fn jump_abs_sets_pc() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x1234);
-        execute(&mut cpu, MicroOp::JumpAbs { addr: 0xABCD });
+        execute(&mut cpu, &mut bus, MicroOp::JumpAbs { addr: 0xABCD });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xABCD);
     }
 
     #[test]
     fn jump_abs_to_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xFFFF);
-        execute(&mut cpu, MicroOp::JumpAbs { addr: 0x0000 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpAbs { addr: 0x0000 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0000);
     }
 
     #[test]
     fn jump_abs_to_max() {
-        let mut cpu = make_cpu();
-        execute(&mut cpu, MicroOp::JumpAbs { addr: 0xFFFF });
+        let (mut cpu, mut bus) = make_cpu();
+        execute(&mut cpu, &mut bus, MicroOp::JumpAbs { addr: 0xFFFF });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xFFFF);
     }
 
@@ -1651,57 +1651,57 @@ mod tests {
 
     #[test]
     fn jump_rel_positive() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0100);
-        execute(&mut cpu, MicroOp::JumpRel { offset: 10 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: 10 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x010A);
     }
 
     #[test]
     fn jump_rel_negative() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0100);
-        execute(&mut cpu, MicroOp::JumpRel { offset: -5 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: -5 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x00FB);
     }
 
     #[test]
     fn jump_rel_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0200);
-        execute(&mut cpu, MicroOp::JumpRel { offset: 0 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: 0 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0200);
     }
 
     #[test]
     fn jump_rel_wraps_forward() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xFFFF);
-        execute(&mut cpu, MicroOp::JumpRel { offset: 1 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: 1 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0000);
     }
 
     #[test]
     fn jump_rel_wraps_backward() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0000);
-        execute(&mut cpu, MicroOp::JumpRel { offset: -1 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: -1 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xFFFF);
     }
 
     #[test]
     fn jump_rel_max_positive() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0000);
-        execute(&mut cpu, MicroOp::JumpRel { offset: 127 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: 127 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x007F);
     }
 
     #[test]
     fn jump_rel_max_negative() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0x0100);
-        execute(&mut cpu, MicroOp::JumpRel { offset: -128 });
+        execute(&mut cpu, &mut bus, MicroOp::JumpRel { offset: -128 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0080);
     }
 
@@ -1711,87 +1711,87 @@ mod tests {
 
     #[test]
     fn call_pushes_pc_and_jumps() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x1234);
-        execute(&mut cpu, MicroOp::Call { addr: 0xABCD });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0xABCD });
 
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xABCD);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFC);
-        let lo = cpu.bus.read(0xFFFC);
-        let hi = cpu.bus.read(0xFFFD);
+        let lo = bus.read(0xFFFC);
+        let hi = bus.read(0xFFFD);
         assert_eq!(u16::from_le_bytes([lo, hi]), 0x1234);
     }
 
     #[test]
     fn ret_pops_pc() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFC);
-        cpu.bus.write(0xFFFC, 0xEF);
-        cpu.bus.write(0xFFFD, 0xBE);
-        execute(&mut cpu, MicroOp::Ret);
+        bus.write(0xFFFC, 0xEF);
+        bus.write(0xFFFD, 0xBE);
+        execute(&mut cpu, &mut bus, MicroOp::Ret);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xBEEF);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFE);
     }
 
     #[test]
     fn call_then_ret_round_trip() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x4567);
 
-        execute(&mut cpu, MicroOp::Call { addr: 0x1000 });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0x1000 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x1000);
 
-        execute(&mut cpu, MicroOp::Ret);
+        execute(&mut cpu, &mut bus, MicroOp::Ret);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x4567);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFE);
     }
 
     #[test]
     fn nested_calls_and_rets() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x0100);
 
-        execute(&mut cpu, MicroOp::Call { addr: 0x0200 });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0x0200 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFC);
 
-        execute(&mut cpu, MicroOp::Call { addr: 0x0300 });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0x0300 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFA);
 
-        execute(&mut cpu, MicroOp::Ret);
+        execute(&mut cpu, &mut bus, MicroOp::Ret);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0200);
 
-        execute(&mut cpu, MicroOp::Ret);
+        execute(&mut cpu, &mut bus, MicroOp::Ret);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0100);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFE);
     }
 
     #[test]
     fn call_with_pc_at_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x0000);
-        execute(&mut cpu, MicroOp::Call { addr: 0x0150 });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0x0150 });
 
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0150);
         let sp = cpu.register_file.get_16bit(Reg16::SP);
-        let lo = cpu.bus.read(sp);
-        let hi = cpu.bus.read(sp + 1);
+        let lo = bus.read(sp);
+        let hi = bus.read(sp + 1);
         assert_eq!(u16::from_le_bytes([lo, hi]), 0x0000);
     }
 
     #[test]
     fn call_with_pc_at_ffff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0xFFFF);
-        execute(&mut cpu, MicroOp::Call { addr: 0x0040 });
+        execute(&mut cpu, &mut bus, MicroOp::Call { addr: 0x0040 });
 
         let sp = cpu.register_file.get_16bit(Reg16::SP);
-        let lo = cpu.bus.read(sp);
-        let hi = cpu.bus.read(sp + 1);
+        let lo = bus.read(sp);
+        let hi = bus.read(sp + 1);
         assert_eq!(u16::from_le_bytes([lo, hi]), 0xFFFF);
     }
 
@@ -1801,13 +1801,13 @@ mod tests {
 
     #[test]
     fn reti_pops_pc_and_enables_ime() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = false;
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFC);
-        cpu.bus.write(0xFFFC, 0xCD);
-        cpu.bus.write(0xFFFD, 0xAB);
+        bus.write(0xFFFC, 0xCD);
+        bus.write(0xFFFD, 0xAB);
 
-        execute(&mut cpu, MicroOp::RetI);
+        execute(&mut cpu, &mut bus, MicroOp::RetI);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xABCD);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFE);
         assert!(cpu.ime);
@@ -1815,13 +1815,13 @@ mod tests {
 
     #[test]
     fn reti_when_ime_already_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFC);
-        cpu.bus.write(0xFFFC, 0x00);
-        cpu.bus.write(0xFFFD, 0x01);
+        bus.write(0xFFFC, 0x00);
+        bus.write(0xFFFD, 0x01);
 
-        execute(&mut cpu, MicroOp::RetI);
+        execute(&mut cpu, &mut bus, MicroOp::RetI);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0100);
         assert!(cpu.ime);
     }
@@ -1834,17 +1834,17 @@ mod tests {
     fn rst_all_vectors() {
         let vectors: [u16; 8] = [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38];
         for &vec in &vectors {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
             cpu.register_file.set_16bit(Reg16::PC, 0x5678);
 
-            execute(&mut cpu, MicroOp::Rst { addr: vec });
+            execute(&mut cpu, &mut bus, MicroOp::Rst { addr: vec });
 
             assert_eq!(cpu.register_file.get_16bit(Reg16::PC), vec,
                 "RST {:#04X} failed", vec);
             let sp = cpu.register_file.get_16bit(Reg16::SP);
-            let lo = cpu.bus.read(sp);
-            let hi = cpu.bus.read(sp + 1);
+            let lo = bus.read(sp);
+            let hi = bus.read(sp + 1);
             assert_eq!(u16::from_le_bytes([lo, hi]), 0x5678);
         }
     }
@@ -1855,20 +1855,20 @@ mod tests {
 
     #[test]
     fn set_flag_each_individually() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::F, 0x00);
-        execute(&mut cpu, MicroOp::SetFlag { flag: Flag::Zero, value: true });
-        execute(&mut cpu, MicroOp::SetFlag { flag: Flag::Subtract, value: true });
-        execute(&mut cpu, MicroOp::SetFlag { flag: Flag::HalfCarry, value: true });
-        execute(&mut cpu, MicroOp::SetFlag { flag: Flag::Carry, value: true });
+        execute(&mut cpu, &mut bus, MicroOp::SetFlag { flag: Flag::Zero, value: true });
+        execute(&mut cpu, &mut bus, MicroOp::SetFlag { flag: Flag::Subtract, value: true });
+        execute(&mut cpu, &mut bus, MicroOp::SetFlag { flag: Flag::HalfCarry, value: true });
+        execute(&mut cpu, &mut bus, MicroOp::SetFlag { flag: Flag::Carry, value: true });
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), FLAG_Z | FLAG_N | FLAG_H | FLAG_C);
     }
 
     #[test]
     fn set_flag_clear_preserves_others() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, true, true, true);
-        execute(&mut cpu, MicroOp::SetFlag { flag: Flag::Carry, value: false });
+        execute(&mut cpu, &mut bus, MicroOp::SetFlag { flag: Flag::Carry, value: false });
         let f = cpu.register_file.get_8bit(Reg8::F);
         assert!(f & FLAG_Z != 0);
         assert!(f & FLAG_N != 0);
@@ -1882,20 +1882,20 @@ mod tests {
 
     #[test]
     fn set_ime_on_off() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         assert!(!cpu.ime);
-        execute(&mut cpu, MicroOp::SetIme { value: true });
+        execute(&mut cpu, &mut bus, MicroOp::SetIme { value: true });
         assert!(cpu.ime);
-        execute(&mut cpu, MicroOp::SetIme { value: false });
+        execute(&mut cpu, &mut bus, MicroOp::SetIme { value: false });
         assert!(!cpu.ime);
     }
 
     #[test]
     fn defer_ime_sets_flag_not_ime() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = false;
         cpu.ime_defer = false;
-        execute(&mut cpu, MicroOp::DeferImeEnable);
+        execute(&mut cpu, &mut bus, MicroOp::DeferImeEnable);
         assert!(cpu.ime_defer);
         assert!(!cpu.ime);
     }
@@ -1906,15 +1906,15 @@ mod tests {
 
     #[test]
     fn trigger_halt() {
-        let mut cpu = make_cpu();
-        execute(&mut cpu, MicroOp::TriggerHalt);
+        let (mut cpu, mut bus) = make_cpu();
+        execute(&mut cpu, &mut bus, MicroOp::TriggerHalt);
         assert!(matches!(cpu.state, PipelineState::Halted));
     }
 
     #[test]
     fn trigger_stop() {
-        let mut cpu = make_cpu();
-        execute(&mut cpu, MicroOp::TriggerStop);
+        let (mut cpu, mut bus) = make_cpu();
+        execute(&mut cpu, &mut bus, MicroOp::TriggerStop);
         assert!(matches!(cpu.state, PipelineState::Halted));
     }
 
@@ -1924,84 +1924,84 @@ mod tests {
 
     #[test]
     fn interrupts_noop_when_ime_off() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = false;
         cpu.register_file.set_8bit(Reg8::IE, 0x01);
-        cpu.bus.write(0xFF0F, 0x01);
+        bus.write(0xFF0F, 0x01);
         let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
     }
 
     #[test]
     fn interrupts_noop_when_none_pending() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x1F);
-        cpu.bus.write(0xFF0F, 0x00);
+        bus.write(0xFF0F, 0x00);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
         assert!(cpu.ime);
     }
 
     #[test]
     fn interrupts_noop_when_enabled_not_requested() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x01); // VBlank enabled
-        cpu.bus.write(0xFF0F, 0x02);     // LCDStat pending
+        bus.write(0xFF0F, 0x02);     // LCDStat pending
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         let old_pc = cpu.register_file.get_16bit(Reg16::PC);
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
     }
 
     #[test]
     fn interrupts_services_vblank() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x01);
-        cpu.bus.write(0xFF0F, 0x01);
+        bus.write(0xFF0F, 0x01);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x1234);
 
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
 
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040);
         assert!(!cpu.ime);
-        assert_eq!(cpu.bus.read(0xFF0F), 0x00);
+        assert_eq!(bus.read(0xFF0F), 0x00);
         let sp = cpu.register_file.get_16bit(Reg16::SP);
-        let lo = cpu.bus.read(sp);
-        let hi = cpu.bus.read(sp + 1);
+        let lo = bus.read(sp);
+        let hi = bus.read(sp + 1);
         assert_eq!(u16::from_le_bytes([lo, hi]), 0x1234);
     }
 
     #[test]
     fn interrupts_services_timer() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x04);
-        cpu.bus.write(0xFF0F, 0x04);
+        bus.write(0xFF0F, 0x04);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0050);
-        assert_eq!(cpu.bus.read(0xFF0F), 0x00);
+        assert_eq!(bus.read(0xFF0F), 0x00);
     }
 
     #[test]
     fn interrupts_priority_lowest_bit_wins() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x05); // VBlank + Timer
-        cpu.bus.write(0xFF0F, 0x05);
+        bus.write(0xFF0F, 0x05);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040); // VBlank wins
-        assert_eq!(cpu.bus.read(0xFF0F), 0x04); // Timer still pending
+        assert_eq!(bus.read(0xFF0F), 0x04); // Timer still pending
     }
 
     #[test]
@@ -2014,13 +2014,13 @@ mod tests {
             (0x10, 0x0060), // Joypad
         ];
         for (mask, vector) in cases {
-            let mut cpu = make_cpu();
+            let (mut cpu, mut bus) = make_cpu();
             cpu.ime = true;
             cpu.register_file.set_8bit(Reg8::IE, mask);
-            cpu.bus.write(0xFF0F, mask);
+            bus.write(0xFF0F, mask);
             cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-            execute(&mut cpu, MicroOp::CheckInterrupts);
+            execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
             assert_eq!(
                 cpu.register_file.get_16bit(Reg16::PC), vector,
                 "Interrupt {:#04X} → {:#06X}", mask, vector
@@ -2031,27 +2031,27 @@ mod tests {
     #[test]
     fn interrupts_clears_only_serviced_bit() {
         // All 5 pending, only service VBlank (lowest priority bit)
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x1F);
-        cpu.bus.write(0xFF0F, 0x1F);
+        bus.write(0xFF0F, 0x1F);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
-        execute(&mut cpu, MicroOp::CheckInterrupts);
-        assert_eq!(cpu.bus.read(0xFF0F), 0x1E); // only bit 0 cleared
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
+        assert_eq!(bus.read(0xFF0F), 0x1E); // only bit 0 cleared
     }
 
     #[test]
     fn interrupts_ignores_upper_bits_of_if() {
         // Bits 5-7 of IF should be masked out
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.ime = true;
         cpu.register_file.set_8bit(Reg8::IE, 0x00); // nothing enabled
-        cpu.bus.write(0xFF0F, 0xE0);     // only upper bits set
+        bus.write(0xFF0F, 0xE0);     // only upper bits set
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         let old_pc = cpu.register_file.get_16bit(Reg16::PC);
 
-        execute(&mut cpu, MicroOp::CheckInterrupts);
+        execute(&mut cpu, &mut bus, MicroOp::CheckInterrupts);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), old_pc);
     }
 
@@ -2061,9 +2061,9 @@ mod tests {
 
     #[test]
     fn fetch_opcode_transitions_to_fetch() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.state = PipelineState::Execute(MicrocodeQueue::new());
-        execute(&mut cpu, MicroOp::FetchOpcode);
+        execute(&mut cpu, &mut bus, MicroOp::FetchOpcode);
         assert!(matches!(cpu.state, PipelineState::Fetch));
     }
 
@@ -2073,27 +2073,27 @@ mod tests {
 
     #[test]
     fn load_reg8_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x42);
-        execute(&mut cpu, MicroOp::LoadReg8 { dst: Reg8::B, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg8 { dst: Reg8::B, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x42);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x42); // src unchanged
     }
 
     #[test]
     fn load_reg8_self_copy() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xAB);
-        execute(&mut cpu, MicroOp::LoadReg8 { dst: Reg8::A, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg8 { dst: Reg8::A, src: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xAB);
     }
 
     #[test]
     fn load_reg8_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::B, 0xFF);
         cpu.register_file.set_8bit(Reg8::C, 0x00);
-        execute(&mut cpu, MicroOp::LoadReg8 { dst: Reg8::B, src: Reg8::C });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg8 { dst: Reg8::B, src: Reg8::C });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x00);
     }
 
@@ -2102,10 +2102,10 @@ mod tests {
         let regs = [Reg8::A, Reg8::B, Reg8::C, Reg8::D, Reg8::E, Reg8::H, Reg8::L];
         for (i, &src) in regs.iter().enumerate() {
             for &dst in &regs {
-                let mut cpu = make_cpu();
+                let (mut cpu, mut bus) = make_cpu();
                 let val = (i as u8).wrapping_mul(0x11).wrapping_add(0x10);
                 cpu.register_file.set_8bit(src, val);
-                execute(&mut cpu, MicroOp::LoadReg8 { dst, src });
+                execute(&mut cpu, &mut bus, MicroOp::LoadReg8 { dst, src });
                 assert_eq!(cpu.register_file.get_8bit(dst), val);
             }
         }
@@ -2117,26 +2117,26 @@ mod tests {
 
     #[test]
     fn load_reg16_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0xBEEF);
-        execute(&mut cpu, MicroOp::LoadReg16 { dst: Reg16::SP, src: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg16 { dst: Reg16::SP, src: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xBEEF);
     }
 
     #[test]
     fn load_reg16_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::BC, 0x0000);
-        execute(&mut cpu, MicroOp::LoadReg16 { dst: Reg16::SP, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg16 { dst: Reg16::SP, src: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0x0000);
     }
 
     #[test]
     fn load_reg16_ffff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::DE, 0xFFFF);
-        execute(&mut cpu, MicroOp::LoadReg16 { dst: Reg16::HL, src: Reg16::DE });
+        execute(&mut cpu, &mut bus, MicroOp::LoadReg16 { dst: Reg16::HL, src: Reg16::DE });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0xFFFF);
     }
 
@@ -2146,42 +2146,42 @@ mod tests {
 
     #[test]
     fn read_immediate8_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         // Place 0x42 at address 0x0100 in ROM
-        cpu.bus.write(0x8000, 0x42); // use VRAM since ROM is read-only
+        bus.write(0x8000, 0x42); // use VRAM since ROM is read-only
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
-        execute(&mut cpu, MicroOp::ReadImmediate8 { into: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate8 { into: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x42);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x8001); // PC advanced
     }
 
     #[test]
     fn read_immediate8_zero() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0x00);
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0x00);
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
         cpu.register_file.set_8bit(Reg8::B, 0xFF);
-        execute(&mut cpu, MicroOp::ReadImmediate8 { into: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate8 { into: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x00);
     }
 
     #[test]
     fn read_immediate8_ff() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0xFF);
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0xFF);
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
-        execute(&mut cpu, MicroOp::ReadImmediate8 { into: Reg8::C });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate8 { into: Reg8::C });
         assert_eq!(cpu.register_file.get_8bit(Reg8::C), 0xFF);
     }
 
     #[test]
     fn read_immediate8_consecutive() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0xAA);
-        cpu.bus.write(0x8001, 0xBB);
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0xAA);
+        bus.write(0x8001, 0xBB);
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
-        execute(&mut cpu, MicroOp::ReadImmediate8 { into: Reg8::D });
-        execute(&mut cpu, MicroOp::ReadImmediate8 { into: Reg8::E });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate8 { into: Reg8::D });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate8 { into: Reg8::E });
         assert_eq!(cpu.register_file.get_8bit(Reg8::D), 0xAA);
         assert_eq!(cpu.register_file.get_8bit(Reg8::E), 0xBB);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x8002);
@@ -2193,33 +2193,33 @@ mod tests {
 
     #[test]
     fn read_immediate16_little_endian() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0xEF); // lo
-        cpu.bus.write(0x8001, 0xBE); // hi
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0xEF); // lo
+        bus.write(0x8001, 0xBE); // hi
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
-        execute(&mut cpu, MicroOp::ReadImmediate16 { into: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate16 { into: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0xBEEF);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x8002);
     }
 
     #[test]
     fn read_immediate16_zero() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0x00);
-        cpu.bus.write(0x8001, 0x00);
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0x00);
+        bus.write(0x8001, 0x00);
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFF);
-        execute(&mut cpu, MicroOp::ReadImmediate16 { into: Reg16::SP });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate16 { into: Reg16::SP });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0x0000);
     }
 
     #[test]
     fn read_immediate16_ffff() {
-        let mut cpu = make_cpu();
-        cpu.bus.write(0x8000, 0xFF);
-        cpu.bus.write(0x8001, 0xFF);
+        let (mut cpu, mut bus) = make_cpu();
+        bus.write(0x8000, 0xFF);
+        bus.write(0x8001, 0xFF);
         cpu.register_file.set_16bit(Reg16::PC, 0x8000);
-        execute(&mut cpu, MicroOp::ReadImmediate16 { into: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::ReadImmediate16 { into: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::BC), 0xFFFF);
     }
 
@@ -2229,44 +2229,44 @@ mod tests {
 
     #[test]
     fn write_then_read_mem_reg8() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0xC000); // WRAM
         cpu.register_file.set_8bit(Reg8::A, 0x55);
-        execute(&mut cpu, MicroOp::WriteMemReg8 { addr_reg: Reg16::HL, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::WriteMemReg8 { addr_reg: Reg16::HL, src: Reg8::A });
 
         cpu.register_file.set_8bit(Reg8::B, 0x00);
-        execute(&mut cpu, MicroOp::ReadMemReg8 { addr_reg: Reg16::HL, into: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::ReadMemReg8 { addr_reg: Reg16::HL, into: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x55);
     }
 
     #[test]
     fn read_mem_reg8_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::BC, 0xC000);
         // WRAM is initialized to 0
-        execute(&mut cpu, MicroOp::ReadMemReg8 { addr_reg: Reg16::BC, into: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::ReadMemReg8 { addr_reg: Reg16::BC, into: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
     }
 
     #[test]
     fn write_mem_reg8_ff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::DE, 0xC100);
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::WriteMemReg8 { addr_reg: Reg16::DE, src: Reg8::A });
-        assert_eq!(cpu.bus.read(0xC100), 0xFF);
+        execute(&mut cpu, &mut bus, MicroOp::WriteMemReg8 { addr_reg: Reg16::DE, src: Reg8::A });
+        assert_eq!(bus.read(0xC100), 0xFF);
     }
 
     #[test]
     fn write_mem_multiple_locations() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         for i in 0..8u16 {
             cpu.register_file.set_16bit(Reg16::HL, 0xC000 + i);
             cpu.register_file.set_8bit(Reg8::A, i as u8 * 0x11);
-            execute(&mut cpu, MicroOp::WriteMemReg8 { addr_reg: Reg16::HL, src: Reg8::A });
+            execute(&mut cpu, &mut bus, MicroOp::WriteMemReg8 { addr_reg: Reg16::HL, src: Reg8::A });
         }
         for i in 0..8u16 {
-            assert_eq!(cpu.bus.read(0xC000 + i), i as u8 * 0x11);
+            assert_eq!(bus.read(0xC000 + i), i as u8 * 0x11);
         }
     }
 
@@ -2276,12 +2276,12 @@ mod tests {
 
     #[test]
     fn write_then_read_mem_imm8() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xAB);
-        execute(&mut cpu, MicroOp::WriteMemImm8 { addr: 0xC050, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::WriteMemImm8 { addr: 0xC050, src: Reg8::A });
 
         cpu.register_file.set_8bit(Reg8::B, 0x00);
-        execute(&mut cpu, MicroOp::ReadMemImm8 { addr: 0xC050, into: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::ReadMemImm8 { addr: 0xC050, into: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0xAB);
     }
 
@@ -2291,34 +2291,34 @@ mod tests {
 
     #[test]
     fn high_page_write_then_read() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::C, 0x44); // offset → 0xFF44
         cpu.register_file.set_8bit(Reg8::A, 0x77);
-        execute(&mut cpu, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
+        execute(&mut cpu, &mut bus, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
 
         cpu.register_file.set_8bit(Reg8::B, 0x00);
-        execute(&mut cpu, MicroOp::ReadHighPage { offset: Reg8::C, into: Reg8::B });
+        execute(&mut cpu, &mut bus, MicroOp::ReadHighPage { offset: Reg8::C, into: Reg8::B });
         assert_eq!(cpu.register_file.get_8bit(Reg8::B), 0x77);
     }
 
     #[test]
     fn high_page_offset_zero() {
         // 0xFF00 + 0x00 = 0xFF00
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::C, 0x00);
         cpu.register_file.set_8bit(Reg8::A, 0xDD);
-        execute(&mut cpu, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
-        assert_eq!(cpu.bus.read(0xFF00), 0xDD);
+        execute(&mut cpu, &mut bus, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
+        assert_eq!(bus.read(0xFF00), 0xDD);
     }
 
     #[test]
     fn high_page_offset_7f_is_io() {
         // 0xFF00 + 0x7F = 0xFF7F (last IO register)
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::C, 0x7F);
         cpu.register_file.set_8bit(Reg8::A, 0xEE);
-        execute(&mut cpu, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
-        assert_eq!(cpu.bus.read(0xFF7F), 0xEE);
+        execute(&mut cpu, &mut bus, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
+        assert_eq!(bus.read(0xFF7F), 0xEE);
     }
 
     // =====================================================================
@@ -2327,88 +2327,88 @@ mod tests {
 
     #[test]
     fn push_pop_round_trip() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::BC, 0x1234);
-        execute(&mut cpu, MicroOp::Push { src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFC);
 
         cpu.register_file.set_16bit(Reg16::DE, 0x0000);
-        execute(&mut cpu, MicroOp::Pop { dst: Reg16::DE });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: Reg16::DE });
         assert_eq!(cpu.register_file.get_16bit(Reg16::DE), 0x1234);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFE);
     }
 
     #[test]
     fn push_pop_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::HL, 0x0000);
-        execute(&mut cpu, MicroOp::Push { src: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::HL });
 
         cpu.register_file.set_16bit(Reg16::BC, 0xFFFF);
-        execute(&mut cpu, MicroOp::Pop { dst: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::BC), 0x0000);
     }
 
     #[test]
     fn push_pop_ffff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::DE, 0xFFFF);
-        execute(&mut cpu, MicroOp::Push { src: Reg16::DE });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::DE });
 
         cpu.register_file.set_16bit(Reg16::HL, 0x0000);
-        execute(&mut cpu, MicroOp::Pop { dst: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0xFFFF);
     }
 
     #[test]
     fn push_pop_multiple() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::BC, 0x1111);
         cpu.register_file.set_16bit(Reg16::DE, 0x2222);
         cpu.register_file.set_16bit(Reg16::HL, 0x3333);
 
-        execute(&mut cpu, MicroOp::Push { src: Reg16::BC });
-        execute(&mut cpu, MicroOp::Push { src: Reg16::DE });
-        execute(&mut cpu, MicroOp::Push { src: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::DE });
+        execute(&mut cpu, &mut bus, MicroOp::Push { src: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFF8);
 
         // Pop in reverse order
         let mut r1 = Reg16::BC;
-        execute(&mut cpu, MicroOp::Pop { dst: r1 });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: r1 });
         assert_eq!(cpu.register_file.get_16bit(r1), 0x3333);
 
         r1 = Reg16::DE;
-        execute(&mut cpu, MicroOp::Pop { dst: r1 });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: r1 });
         assert_eq!(cpu.register_file.get_16bit(r1), 0x2222);
 
         r1 = Reg16::HL;
-        execute(&mut cpu, MicroOp::Pop { dst: r1 });
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: r1 });
         assert_eq!(cpu.register_file.get_16bit(r1), 0x1111);
     }
 
     #[test]
     fn pop_af_masks_lower_nibble() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFC);
         // Push 0xFF onto stack where F byte would be (low nibble has junk bits)
-        cpu.bus.write(0xFFFC, 0xFF); // F = 0xFF (lower 4 bits should be masked)
-        cpu.bus.write(0xFFFD, 0x12); // A = 0x12
-        execute(&mut cpu, MicroOp::Pop { dst: Reg16::AF });
+        bus.write(0xFFFC, 0xFF); // F = 0xFF (lower 4 bits should be masked)
+        bus.write(0xFFFD, 0x12); // A = 0x12
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: Reg16::AF });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x12);
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0xF0); // lower nibble cleared
     }
 
     #[test]
     fn pop_af_preserves_only_upper_nibble() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFC);
-        cpu.bus.write(0xFFFC, 0x5A); // F = 0x5A → should become 0x50
-        cpu.bus.write(0xFFFD, 0x00);
-        execute(&mut cpu, MicroOp::Pop { dst: Reg16::AF });
+        bus.write(0xFFFC, 0x5A); // F = 0x5A → should become 0x50
+        bus.write(0xFFFD, 0x00);
+        execute(&mut cpu, &mut bus, MicroOp::Pop { dst: Reg16::AF });
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0x50);
     }
 
@@ -2418,9 +2418,9 @@ mod tests {
 
     #[test]
     fn alu8_add_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x20),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x30);
@@ -2429,9 +2429,9 @@ mod tests {
 
     #[test]
     fn alu8_add_overflow_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2440,9 +2440,9 @@ mod tests {
 
     #[test]
     fn alu8_add_half_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x0F);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x10);
@@ -2451,9 +2451,9 @@ mod tests {
 
     #[test]
     fn alu8_add_zero_plus_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x00),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2462,10 +2462,10 @@ mod tests {
 
     #[test]
     fn alu8_add_from_register() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x30);
         cpu.register_file.set_8bit(Reg8::B, 0x40);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Reg(Reg8::B),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x70);
@@ -2477,9 +2477,9 @@ mod tests {
 
     #[test]
     fn alu8_sub_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x50);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x10),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x40);
@@ -2490,9 +2490,9 @@ mod tests {
 
     #[test]
     fn alu8_sub_to_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x42);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x42),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2501,9 +2501,9 @@ mod tests {
 
     #[test]
     fn alu8_sub_borrow_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
@@ -2515,9 +2515,9 @@ mod tests {
 
     #[test]
     fn alu8_sub_half_borrow() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0F);
@@ -2532,9 +2532,9 @@ mod tests {
 
     #[test]
     fn alu8_and_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::And, dest: Reg8::A, src: Operand8::Imm(0x0F),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0F);
@@ -2543,9 +2543,9 @@ mod tests {
 
     #[test]
     fn alu8_and_zero_result() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xF0);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::And, dest: Reg8::A, src: Operand8::Imm(0x0F),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2554,9 +2554,9 @@ mod tests {
 
     #[test]
     fn alu8_and_ff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xA5);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::And, dest: Reg8::A, src: Operand8::Imm(0xFF),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xA5);
@@ -2568,9 +2568,9 @@ mod tests {
 
     #[test]
     fn alu8_or_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xF0);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Or, dest: Reg8::A, src: Operand8::Imm(0x0F),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
@@ -2579,9 +2579,9 @@ mod tests {
 
     #[test]
     fn alu8_or_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Or, dest: Reg8::A, src: Operand8::Imm(0x00),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2594,9 +2594,9 @@ mod tests {
 
     #[test]
     fn alu8_xor_self_is_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xAB);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Xor, dest: Reg8::A, src: Operand8::Reg(Reg8::A),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
@@ -2605,9 +2605,9 @@ mod tests {
 
     #[test]
     fn alu8_xor_ff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xA5);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Xor, dest: Reg8::A, src: Operand8::Imm(0xFF),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x5A);
@@ -2616,12 +2616,12 @@ mod tests {
 
     #[test]
     fn alu8_xor_double_is_identity() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x42);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Xor, dest: Reg8::A, src: Operand8::Imm(0xBB),
         });
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Xor, dest: Reg8::A, src: Operand8::Imm(0xBB),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x42);
@@ -2633,25 +2633,25 @@ mod tests {
 
     #[test]
     fn daa_after_add_09_plus_01() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x09);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         // A = 0x0A, which is invalid BCD
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x10); // 09 + 01 = 10 BCD
     }
 
     #[test]
     fn daa_after_add_99_plus_01() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x99);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         // A = 0x9A
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00); // 99 + 01 = 100, wraps
         let (z, _, _, c) = read_flags(&cpu);
         assert!(z); // result is zero
@@ -2660,48 +2660,48 @@ mod tests {
 
     #[test]
     fn daa_no_adjustment_needed() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x15);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x22),
         });
         // A = 0x37, already valid BCD
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x37);
     }
 
     #[test]
     fn daa_after_sub() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
         // A = 0x0F, N=1, H=1
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x09); // 10 - 01 = 09 BCD
     }
 
     #[test]
     fn daa_clears_h_flag() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x0F);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Add, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(!h); // DAA always clears H
     }
 
     #[test]
     fn daa_preserves_n_flag() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x20);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sub, dest: Reg8::A, src: Operand8::Imm(0x01),
         });
-        execute(&mut cpu, MicroOp::Daa);
+        execute(&mut cpu, &mut bus, MicroOp::Daa);
         let (_, n, _, _) = read_flags(&cpu);
         assert!(n); // N preserved from sub
     }
@@ -2712,26 +2712,26 @@ mod tests {
 
     #[test]
     fn cpl_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
     }
 
     #[test]
     fn cpl_ff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
     }
 
     #[test]
     fn cpl_sets_n_and_h() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, false);
         cpu.register_file.set_8bit(Reg8::A, 0x42);
-        execute(&mut cpu, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
         let (_, n, h, _) = read_flags(&cpu);
         assert!(n);
         assert!(h);
@@ -2739,10 +2739,10 @@ mod tests {
 
     #[test]
     fn cpl_preserves_z_and_c() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, true); // Z=1, C=1
         cpu.register_file.set_8bit(Reg8::A, 0xA5);
-        execute(&mut cpu, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x5A);
         let (z, _, _, c) = read_flags(&cpu);
         assert!(z); // preserved
@@ -2751,10 +2751,10 @@ mod tests {
 
     #[test]
     fn cpl_is_own_inverse() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x3C);
-        execute(&mut cpu, MicroOp::Cpl);
-        execute(&mut cpu, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
+        execute(&mut cpu, &mut bus, MicroOp::Cpl);
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x3C);
     }
 
@@ -2764,41 +2764,41 @@ mod tests {
 
     #[test]
     fn scf_sets_carry_clears_n_h() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, true, false);
-        execute(&mut cpu, MicroOp::Scf);
+        execute(&mut cpu, &mut bus, MicroOp::Scf);
         assert_eq!(read_flags(&cpu), (false, false, false, true));
     }
 
     #[test]
     fn scf_preserves_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, true, true, false);
-        execute(&mut cpu, MicroOp::Scf);
+        execute(&mut cpu, &mut bus, MicroOp::Scf);
         assert_eq!(read_flags(&cpu), (true, false, false, true));
     }
 
     #[test]
     fn ccf_flips_carry_from_0_to_1() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, true, false); // C=0
-        execute(&mut cpu, MicroOp::Ccf);
+        execute(&mut cpu, &mut bus, MicroOp::Ccf);
         assert_eq!(read_flags(&cpu), (false, false, false, true)); // C=1
     }
 
     #[test]
     fn ccf_flips_carry_from_1_to_0() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, true, true); // C=1
-        execute(&mut cpu, MicroOp::Ccf);
+        execute(&mut cpu, &mut bus, MicroOp::Ccf);
         assert_eq!(read_flags(&cpu), (false, false, false, false)); // C=0
     }
 
     #[test]
     fn ccf_preserves_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, true);
-        execute(&mut cpu, MicroOp::Ccf);
+        execute(&mut cpu, &mut bus, MicroOp::Ccf);
         let (z, n, h, c) = read_flags(&cpu);
         assert!(z); // preserved
         assert!(!n);
@@ -2812,18 +2812,18 @@ mod tests {
 
     #[test]
     fn inc8_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         assert_eq!(read_flags(&cpu), (false, false, false, false));
     }
 
     #[test]
     fn inc8_half_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x0F);
-        execute(&mut cpu, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x10);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(h);
@@ -2831,9 +2831,9 @@ mod tests {
 
     #[test]
     fn inc8_wraps_to_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
-        execute(&mut cpu, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         let (z, n, h, _) = read_flags(&cpu);
         assert!(z);
@@ -2843,29 +2843,29 @@ mod tests {
 
     #[test]
     fn inc8_preserves_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true); // C=1
         cpu.register_file.set_8bit(Reg8::B, 0x05);
-        execute(&mut cpu, MicroOp::Inc8 { target: Operand8::Reg(Reg8::B) });
+        execute(&mut cpu, &mut bus, MicroOp::Inc8 { target: Operand8::Reg(Reg8::B) });
         let (_, _, _, c) = read_flags(&cpu);
         assert!(c); // carry must be preserved
     }
 
     #[test]
     fn inc8_n_always_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, false, false); // N was set
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Inc8 { target: Operand8::Reg(Reg8::A) });
         let (_, n, _, _) = read_flags(&cpu);
         assert!(!n);
     }
 
     #[test]
     fn dec8_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x02);
-        execute(&mut cpu, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01);
         let (_, n, _, _) = read_flags(&cpu);
         assert!(n); // N always set for dec
@@ -2873,9 +2873,9 @@ mod tests {
 
     #[test]
     fn dec8_to_zero() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x01);
-        execute(&mut cpu, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x00);
         let (z, n, _, _) = read_flags(&cpu);
         assert!(z);
@@ -2884,9 +2884,9 @@ mod tests {
 
     #[test]
     fn dec8_wraps_to_ff() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
-        execute(&mut cpu, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0xFF);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(h); // borrow from bit 4
@@ -2894,9 +2894,9 @@ mod tests {
 
     #[test]
     fn dec8_half_borrow() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
+        execute(&mut cpu, &mut bus, MicroOp::Dec8 { target: Operand8::Reg(Reg8::A) });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x0F);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(h); // (0x10 & 0xF) == 0 → H set
@@ -2904,10 +2904,10 @@ mod tests {
 
     #[test]
     fn dec8_preserves_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, false, false, true);
         cpu.register_file.set_8bit(Reg8::B, 0x05);
-        execute(&mut cpu, MicroOp::Dec8 { target: Operand8::Reg(Reg8::B) });
+        execute(&mut cpu, &mut bus, MicroOp::Dec8 { target: Operand8::Reg(Reg8::B) });
         let (_, _, _, c) = read_flags(&cpu);
         assert!(c);
     }
@@ -2918,19 +2918,19 @@ mod tests {
 
     #[test]
     fn add16_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0x1000);
         cpu.register_file.set_16bit(Reg16::BC, 0x2000);
-        execute(&mut cpu, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0x3000);
     }
 
     #[test]
     fn add16_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0xFFFF);
         cpu.register_file.set_16bit(Reg16::BC, 0x0001);
-        execute(&mut cpu, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0x0000);
         let (_, n, _, c) = read_flags(&cpu);
         assert!(!n);
@@ -2939,10 +2939,10 @@ mod tests {
 
     #[test]
     fn add16_half_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0x0FFF);
         cpu.register_file.set_16bit(Reg16::BC, 0x0001);
-        execute(&mut cpu, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0x1000);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(h); // carry from bit 11
@@ -2950,22 +2950,22 @@ mod tests {
 
     #[test]
     fn add16_preserves_z() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, true, false, false, false); // Z=1
         cpu.register_file.set_16bit(Reg16::HL, 0x1000);
         cpu.register_file.set_16bit(Reg16::BC, 0x1000);
-        execute(&mut cpu, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
         let (z, _, _, _) = read_flags(&cpu);
         assert!(z); // Z preserved
     }
 
     #[test]
     fn add16_clears_n() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         set_flags(&mut cpu, false, true, false, false); // N=1
         cpu.register_file.set_16bit(Reg16::HL, 0x0000);
         cpu.register_file.set_16bit(Reg16::BC, 0x0000);
-        execute(&mut cpu, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Add16 { dest: Reg16::HL, src: Reg16::BC });
         let (_, n, _, _) = read_flags(&cpu);
         assert!(!n);
     }
@@ -2976,25 +2976,25 @@ mod tests {
 
     #[test]
     fn add_sp_e_positive() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFF0);
-        execute(&mut cpu, MicroOp::AddSpE { e: 8 });
+        execute(&mut cpu, &mut bus, MicroOp::AddSpE { e: 8 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFF8);
     }
 
     #[test]
     fn add_sp_e_negative() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xFFF8);
-        execute(&mut cpu, MicroOp::AddSpE { e: -8 });
+        execute(&mut cpu, &mut bus, MicroOp::AddSpE { e: -8 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFF0);
     }
 
     #[test]
     fn add_sp_e_z_always_clear() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0x0000);
-        execute(&mut cpu, MicroOp::AddSpE { e: 0 });
+        execute(&mut cpu, &mut bus, MicroOp::AddSpE { e: 0 });
         let (z, n, _, _) = read_flags(&cpu);
         assert!(!z); // Z always 0 for ADD SP,e
         assert!(!n); // N always 0
@@ -3002,9 +3002,9 @@ mod tests {
 
     #[test]
     fn add_sp_e_half_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0x000F);
-        execute(&mut cpu, MicroOp::AddSpE { e: 1 });
+        execute(&mut cpu, &mut bus, MicroOp::AddSpE { e: 1 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0x0010);
         let (_, _, h, _) = read_flags(&cpu);
         assert!(h); // carry from bit 3
@@ -3012,9 +3012,9 @@ mod tests {
 
     #[test]
     fn add_sp_e_carry_from_byte() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0x00FF);
-        execute(&mut cpu, MicroOp::AddSpE { e: 1 });
+        execute(&mut cpu, &mut bus, MicroOp::AddSpE { e: 1 });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0x0100);
         let (_, _, _, c) = read_flags(&cpu);
         assert!(c); // carry from bit 7
@@ -3026,42 +3026,42 @@ mod tests {
 
     #[test]
     fn inc16_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::BC, 0x1234);
-        execute(&mut cpu, MicroOp::Inc16 { reg: Reg16::BC });
+        execute(&mut cpu, &mut bus, MicroOp::Inc16 { reg: Reg16::BC });
         assert_eq!(cpu.register_file.get_16bit(Reg16::BC), 0x1235);
     }
 
     #[test]
     fn inc16_wraps() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0xFFFF);
-        execute(&mut cpu, MicroOp::Inc16 { reg: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Inc16 { reg: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0x0000);
     }
 
     #[test]
     fn dec16_basic() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::DE, 0x1000);
-        execute(&mut cpu, MicroOp::Dec16 { reg: Reg16::DE });
+        execute(&mut cpu, &mut bus, MicroOp::Dec16 { reg: Reg16::DE });
         assert_eq!(cpu.register_file.get_16bit(Reg16::DE), 0x0FFF);
     }
 
     #[test]
     fn dec16_wraps() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0x0000);
-        execute(&mut cpu, MicroOp::Dec16 { reg: Reg16::SP });
+        execute(&mut cpu, &mut bus, MicroOp::Dec16 { reg: Reg16::SP });
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xFFFF);
     }
 
     #[test]
     fn inc16_dec16_round_trip() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0x8000);
-        execute(&mut cpu, MicroOp::Inc16 { reg: Reg16::HL });
-        execute(&mut cpu, MicroOp::Dec16 { reg: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Inc16 { reg: Reg16::HL });
+        execute(&mut cpu, &mut bus, MicroOp::Dec16 { reg: Reg16::HL });
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0x8000);
     }
 }

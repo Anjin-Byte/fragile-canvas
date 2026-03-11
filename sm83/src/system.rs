@@ -13,12 +13,12 @@
 
 use crate::cpu::CPU;
 use crate::memory::bus::Bus;
-use crate::memory::mmu::MMU;
 use crate::timer::T_CYCLES_PER_M;
 use crate::trace::Tracer;
 
 pub struct GameBoy {
-    pub cpu: CPU<MMU>,
+    pub cpu: CPU,
+    pub bus: Bus,
     /// Tracks position within the current M-cycle (0..3).
     dot_phase: u8,
     /// Total T-cycles (dots) executed since boot.
@@ -26,9 +26,10 @@ pub struct GameBoy {
 }
 
 impl GameBoy {
-    pub fn new(mmu: MMU, tracer: Tracer) -> Self {
+    pub fn new(bus: Bus, tracer: Tracer) -> Self {
         Self {
-            cpu: CPU::new(mmu, tracer),
+            cpu: CPU::new(tracer),
+            bus,
             dot_phase: 0,
             total_dots: 0,
         }
@@ -40,20 +41,20 @@ impl GameBoy {
     /// Every subsystem derives its timing from this.
     pub fn tick(&mut self) {
         // 1. Advance the system counter and timer.
-        self.cpu.bus.timer.tick();
+        self.bus.timer.tick();
 
         // 2. If the timer raised an interrupt, set the IF bit.
-        if self.cpu.bus.timer.interrupt_pending {
-            self.cpu.bus.timer.interrupt_pending = false;
-            let if_val = self.cpu.bus.read(0xFF0F);
-            self.cpu.bus.write(0xFF0F, if_val | (1 << 2));
+        if self.bus.timer.interrupt_pending {
+            self.bus.timer.interrupt_pending = false;
+            let if_val = self.bus.read(0xFF0F);
+            self.bus.write(0xFF0F, if_val | (1 << 2));
         }
 
         // 3. CPU ticks once per M-cycle (every 4th dot).
         self.dot_phase += 1;
         if self.dot_phase >= T_CYCLES_PER_M as u8 {
             self.dot_phase = 0;
-            self.cpu.tick();
+            self.cpu.tick(&mut self.bus);
         }
 
         // Future: PPU ticks every dot

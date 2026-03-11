@@ -10,20 +10,18 @@ use crate::trace::Tracer;
 use pipeline::PipelineState;
 use registers::{Reg16, RegisterFile};
 
-pub struct CPU<B: Bus> {
+pub struct CPU {
     pub register_file: RegisterFile,
-    pub bus: B,
     pub state: PipelineState,
     pub ime: bool,
     pub ime_defer: bool,
     pub tracer: Tracer,
 }
 
-impl<B: Bus> CPU<B> {
-    pub fn new(bus: B, tracer: Tracer) -> Self {
+impl CPU {
+    pub fn new(tracer: Tracer) -> Self {
         Self {
             register_file: RegisterFile::new(),
-            bus,
             state: PipelineState::Fetch,
             ime: false,
             ime_defer: false,
@@ -31,18 +29,18 @@ impl<B: Bus> CPU<B> {
         }
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, bus: &mut Bus) {
         match &mut self.state {
             PipelineState::Fetch => {
                 let pc = self.register_file.get_16bit(Reg16::PC);
-                let opcode = self.bus.read(pc);
+                let opcode = bus.read(pc);
                 self.register_file.inc16(Reg16::PC);
                 self.state = PipelineState::Decode(opcode);
             }
             PipelineState::Decode(opcode) => {
                 let micro_ops = if *opcode == 0xCB {
                     let pc = self.register_file.get_16bit(Reg16::PC);
-                    let cb_code = self.bus.read(pc);
+                    let cb_code = bus.read(pc);
                     self.register_file.inc16(Reg16::PC);
                     let ops = decoder::decode_cb_instruction(cb_code);
                     if self.tracer.enabled() {
@@ -69,7 +67,7 @@ impl<B: Bus> CPU<B> {
             PipelineState::Execute(ops) => {
                 if !ops.is_empty() {
                     let op = ops.remove(0);
-                    microcode::execute(self, op);
+                    microcode::execute(self, bus, op);
                 } else {
                     self.state = PipelineState::Fetch;
                 }
@@ -77,7 +75,7 @@ impl<B: Bus> CPU<B> {
             PipelineState::InterruptService(ops) => {
                 if !ops.is_empty() {
                     let op = ops.remove(0);
-                    microcode::execute(self, op);
+                    microcode::execute(self, bus, op);
                 } else {
                     self.state = PipelineState::Fetch;
                 }
@@ -90,7 +88,7 @@ impl<B: Bus> CPU<B> {
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::{cpu::registers::Reg16, memory::mmu::MMU};
+    use crate::cpu::registers::Reg16;
     use crate::memory::bus::Bus;
     use crate::trace::Tracer;
 
@@ -100,7 +98,8 @@ mod integration_tests {
 
     #[test]
     fn test_memory_register_integration() {
-        let mut cpu = CPU::new(MMU::new(), Tracer::off());
+        let mut cpu = CPU::new(Tracer::off());
+        let mut bus = Bus::new();
         let mut rng = rand::thread_rng();
 
         let n: u64 = 1000000;
@@ -119,22 +118,22 @@ mod integration_tests {
             let de_memory_dummy = rng.gen_range(0x00..0xFF);
             let hl_memory_dummy = rng.gen_range(0x00..0xFF);
 
-            cpu.bus.write(cpu.register_file.get_16bit(Reg16::BC), bc_memory_dummy);
-            cpu.bus.write(cpu.register_file.get_16bit(Reg16::DE), de_memory_dummy);
-            cpu.bus.write(cpu.register_file.get_16bit(Reg16::HL), hl_memory_dummy);
+            bus.write(cpu.register_file.get_16bit(Reg16::BC), bc_memory_dummy);
+            bus.write(cpu.register_file.get_16bit(Reg16::DE), de_memory_dummy);
+            bus.write(cpu.register_file.get_16bit(Reg16::HL), hl_memory_dummy);
 
             assert_eq!(
-                cpu.bus.read(bc_addr_data),
+                bus.read(bc_addr_data),
                 bc_memory_dummy,
                 "Register BC failed integration test..."
             );
             assert_eq!(
-                cpu.bus.read(de_addr_data),
+                bus.read(de_addr_data),
                 de_memory_dummy,
                 "Register DE failed integration test..."
             );
             assert_eq!(
-                cpu.bus.read(hl_addr_data),
+                bus.read(hl_addr_data),
                 hl_memory_dummy,
                 "Register HL failed integration test..."
             );
@@ -147,7 +146,6 @@ mod integration_tests {
 mod boot_rom_tests {
     use crate::cpu::registers::{Reg8, Reg16};
     use crate::memory::bus::Bus;
-    use crate::memory::mmu::MMU;
     use crate::trace::Tracer;
 
     use super::*;
@@ -164,9 +162,9 @@ mod boot_rom_tests {
         0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
     ];
 
-    fn make_boot_cpu() -> CPU<MMU> {
-        let mut mmu = MMU::new();
-        mmu.load_boot_rom(crate::BOOT_ROM).unwrap();
+    fn make_boot_cpu() -> (CPU, Bus) {
+        let mut bus = Bus::new();
+        bus.load_boot_rom(crate::BOOT_ROM).unwrap();
 
         // Build a minimal cartridge with a valid Nintendo logo at 0x0104
         let mut cart = vec![0u8; 0x150];
@@ -176,41 +174,36 @@ mod boot_rom_tests {
         // All 25 bytes are zero, so checksum = (-1)*25 = 0xE7
         cart[0x014D] = 0xE7;
 
-        mmu.load_cartridge(&cart);
+        bus.load_cartridge(&cart);
 
         // Pre-set LY (0xFF44) to 0x90 so the boot ROM's VBlank wait loop
         // exits immediately. Without a PPU, LY would stay at 0 forever.
-        mmu.write(0xFF44, 0x90);
+        bus.write(0xFF44, 0x90);
 
-        CPU::new(mmu, Tracer::off())
+        (CPU::new(Tracer::off()), bus)
     }
 
-    fn tick_until(cpu: &mut CPU<MMU>, pc: u16) -> u64 {
+    fn tick_until(cpu: &mut CPU, bus: &mut Bus, pc: u16) -> u64 {
         for t in 0..MAX_TICKS {
-            // Only match PC at Fetch boundaries so the previous instruction
-            // has fully completed (all its microops have executed).
             if matches!(cpu.state, PipelineState::Fetch)
                 && cpu.register_file.get_16bit(Reg16::PC) == pc
             {
                 return t;
             }
-            cpu.tick();
-            cpu.bus.write(0xFF44, 0x90);
+            cpu.tick(bus);
+            bus.write(0xFF44, 0x90);
         }
         panic!("CPU did not reach PC={:#06X} within {} ticks", pc, MAX_TICKS);
     }
 
     #[test]
     fn vram_zeroed_after_boot_init() {
-        let mut cpu = make_boot_cpu();
-        // The boot ROM zeroes VRAM (0x8000-0x9FFF) early on.
-        // The zero loop ends when HL wraps from 0x9FFF back around.
-        // After the loop, PC moves past the VRAM-clear routine (~0x000C).
-        tick_until(&mut cpu, 0x000C);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x000C);
 
         for addr in 0x8000..=0x9FFFu16 {
             assert_eq!(
-                cpu.bus.read(addr), 0,
+                bus.read(addr), 0,
                 "VRAM at {:#06X} was not zeroed", addr
             );
         }
@@ -218,15 +211,12 @@ mod boot_rom_tests {
 
     #[test]
     fn nintendo_logo_tiles_in_vram() {
-        let mut cpu = make_boot_cpu();
-        // The boot ROM copies logo tile data into VRAM at 0x8010-0x809F.
-        // By the time PC reaches the scroll/display section (~0x0040),
-        // the tiles should be written.
-        tick_until(&mut cpu, 0x0040);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x0040);
 
         let mut all_zero = true;
         for addr in 0x8010..=0x809Fu16 {
-            if cpu.bus.read(addr) != 0 {
+            if bus.read(addr) != 0 {
                 all_zero = false;
                 break;
             }
@@ -236,34 +226,31 @@ mod boot_rom_tests {
 
     #[test]
     fn logo_comparison_passes() {
-        let mut cpu = make_boot_cpu();
-        // If the logo comparison fails, the boot ROM locks into an infinite
-        // loop and never reaches 0x00E0+. Getting past 0x00E0 means it passed.
-        tick_until(&mut cpu, 0x00E8);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x00E8);
     }
 
     #[test]
     fn boot_rom_unmapped() {
-        let mut cpu = make_boot_cpu();
-        tick_until(&mut cpu, 0x0100);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x0100);
 
-        // 0xFF50 bit 0 set means boot ROM is unmapped
         assert_ne!(
-            cpu.bus.read(0xFF50) & 1, 0,
+            bus.read(0xFF50) & 1, 0,
             "boot ROM was not unmapped (0xFF50 bit 0 not set)"
         );
     }
 
     #[test]
     fn pc_reaches_cartridge_entry() {
-        let mut cpu = make_boot_cpu();
-        tick_until(&mut cpu, 0x0100);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x0100);
     }
 
     #[test]
     fn registers_after_boot() {
-        let mut cpu = make_boot_cpu();
-        tick_until(&mut cpu, 0x0100);
+        let (mut cpu, mut bus) = make_boot_cpu();
+        tick_until(&mut cpu, &mut bus, 0x0100);
 
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x01, "A != 0x01");
         assert_eq!(cpu.register_file.get_8bit(Reg8::F), 0xB0, "F != 0xB0");

@@ -150,7 +150,6 @@ mod tests {
     use crate::cpu::CPU;
     use crate::cpu::pipeline::PipelineState;
     use crate::memory::bus::Bus;
-    use crate::memory::mmu::MMU;
 
     // =====================================================================
     //  Cycle table sanity
@@ -859,156 +858,156 @@ mod tests {
     }
 
     // =====================================================================
-    //  End-to-end: compound MicroOps via CPU + MMU
+    //  End-to-end: compound MicroOps via CPU + Bus
     // =====================================================================
 
-    fn make_cpu() -> CPU<MMU> {
-        CPU::new(MMU::new(), crate::trace::Tracer::off())
+    fn make_cpu() -> (CPU, Bus) {
+        (CPU::new(crate::trace::Tracer::off()), Bus::new())
     }
 
     use crate::cpu::microcode::execute;
 
-    fn write_wram(cpu: &mut CPU<MMU>, addr: u16, val: u8) {
-        cpu.bus.write(addr, val);
+    fn write_wram(bus: &mut Bus, addr: u16, val: u8) {
+        bus.write(addr, val);
     }
 
     #[test]
     fn e2e_jump_rel_imm_forward() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x05); // +5 signed
-        execute(&mut cpu, MicroOp::JumpRelImm);
+        write_wram(&mut bus, 0xC000, 0x05); // +5 signed
+        execute(&mut cpu, &mut bus, MicroOp::JumpRelImm);
         // PC = 0xC001 (past offset byte) + 5 = 0xC006
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC006);
     }
 
     #[test]
     fn e2e_jump_rel_imm_backward() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC010);
-        write_wram(&mut cpu, 0xC010, 0xFB); // -5 signed
-        execute(&mut cpu, MicroOp::JumpRelImm);
+        write_wram(&mut bus, 0xC010, 0xFB); // -5 signed
+        execute(&mut cpu, &mut bus, MicroOp::JumpRelImm);
         // PC = 0xC011 + (-5) = 0xC00C
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC00C);
     }
 
     #[test]
     fn e2e_jump_abs_imm() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x50); // lo
-        write_wram(&mut cpu, 0xC001, 0xC1); // hi → target = 0xC150
-        execute(&mut cpu, MicroOp::JumpAbsImm);
+        write_wram(&mut bus, 0xC000, 0x50); // lo
+        write_wram(&mut bus, 0xC001, 0xC1); // hi → target = 0xC150
+        execute(&mut cpu, &mut bus, MicroOp::JumpAbsImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC150);
     }
 
     #[test]
     fn e2e_jump_hl() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::HL, 0xBEEF);
-        execute(&mut cpu, MicroOp::JumpHL);
+        execute(&mut cpu, &mut bus, MicroOp::JumpHL);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xBEEF);
     }
 
     #[test]
     fn e2e_call_imm_pushes_return_addr() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
         cpu.register_file.set_16bit(Reg16::SP, 0xDFFE);
-        write_wram(&mut cpu, 0xC000, 0x00); // lo
-        write_wram(&mut cpu, 0xC001, 0xC1); // hi → target = 0xC100
-        execute(&mut cpu, MicroOp::CallImm);
+        write_wram(&mut bus, 0xC000, 0x00); // lo
+        write_wram(&mut bus, 0xC001, 0xC1); // hi → target = 0xC100
+        execute(&mut cpu, &mut bus, MicroOp::CallImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC100);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xDFFC);
         // Return addr (0xC002) on stack
         let sp = cpu.register_file.get_16bit(Reg16::SP);
-        let ret_lo = cpu.bus.read(sp);
-        let ret_hi = cpu.bus.read(sp + 1);
+        let ret_lo = bus.read(sp);
+        let ret_hi = bus.read(sp + 1);
         let ret_addr = u16::from_le_bytes([ret_lo, ret_hi]);
         assert_eq!(ret_addr, 0xC002, "return address should be past the 2-byte operand");
     }
 
     #[test]
     fn e2e_call_then_ret_roundtrip() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
         cpu.register_file.set_16bit(Reg16::SP, 0xDFFE);
-        write_wram(&mut cpu, 0xC000, 0x00);
-        write_wram(&mut cpu, 0xC001, 0xC4); // target = 0xC400
-        execute(&mut cpu, MicroOp::CallImm);
+        write_wram(&mut bus, 0xC000, 0x00);
+        write_wram(&mut bus, 0xC001, 0xC4); // target = 0xC400
+        execute(&mut cpu, &mut bus, MicroOp::CallImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC400);
 
-        execute(&mut cpu, MicroOp::Ret);
+        execute(&mut cpu, &mut bus, MicroOp::Ret);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC002);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xDFFE);
     }
 
     #[test]
     fn e2e_add_sp_imm_positive() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xDFF0);
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x05); // +5
-        execute(&mut cpu, MicroOp::AddSpImm);
+        write_wram(&mut bus, 0xC000, 0x05); // +5
+        execute(&mut cpu, &mut bus, MicroOp::AddSpImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xDFF5);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC001);
     }
 
     #[test]
     fn e2e_add_sp_imm_negative() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xDFF0);
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0xFE); // -2
-        execute(&mut cpu, MicroOp::AddSpImm);
+        write_wram(&mut bus, 0xC000, 0xFE); // -2
+        execute(&mut cpu, &mut bus, MicroOp::AddSpImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xDFEE);
     }
 
     #[test]
     fn e2e_load_hl_sp_imm() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xD000);
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x10); // +16
-        execute(&mut cpu, MicroOp::LoadHlSpImm);
+        write_wram(&mut bus, 0xC000, 0x10); // +16
+        execute(&mut cpu, &mut bus, MicroOp::LoadHlSpImm);
         assert_eq!(cpu.register_file.get_16bit(Reg16::HL), 0xD010);
         assert_eq!(cpu.register_file.get_16bit(Reg16::SP), 0xD000);
     }
 
     #[test]
     fn e2e_write_sp_16bit_addr() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::SP, 0xABCD);
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x00); // addr lo
-        write_wram(&mut cpu, 0xC001, 0xC1); // addr hi → 0xC100
-        execute(&mut cpu, MicroOp::WriteSp16BitAddr);
-        assert_eq!(cpu.bus.read(0xC100), 0xCD); // SP lo
-        assert_eq!(cpu.bus.read(0xC101), 0xAB); // SP hi
+        write_wram(&mut bus, 0xC000, 0x00); // addr lo
+        write_wram(&mut bus, 0xC001, 0xC1); // addr hi → 0xC100
+        execute(&mut cpu, &mut bus, MicroOp::WriteSp16BitAddr);
+        assert_eq!(bus.read(0xC100), 0xCD); // SP lo
+        assert_eq!(bus.read(0xC101), 0xAB); // SP hi
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC002);
     }
 
     #[test]
     fn e2e_read_mem_16bit_addr() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x50); // addr lo
-        write_wram(&mut cpu, 0xC001, 0xC0); // addr hi → 0xC050
-        write_wram(&mut cpu, 0xC050, 0x42); // data
-        execute(&mut cpu, MicroOp::ReadMem16BitAddr { into: Reg8::A });
+        write_wram(&mut bus, 0xC000, 0x50); // addr lo
+        write_wram(&mut bus, 0xC001, 0xC0); // addr hi → 0xC050
+        write_wram(&mut bus, 0xC050, 0x42); // data
+        execute(&mut cpu, &mut bus, MicroOp::ReadMem16BitAddr { into: Reg8::A });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x42);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC002);
     }
 
     #[test]
     fn e2e_write_mem_16bit_addr() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x99);
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
-        write_wram(&mut cpu, 0xC000, 0x20); // addr lo
-        write_wram(&mut cpu, 0xC001, 0xC0); // addr hi → 0xC020
-        execute(&mut cpu, MicroOp::WriteMem16BitAddr { src: Reg8::A });
-        assert_eq!(cpu.bus.read(0xC020), 0x99);
+        write_wram(&mut bus, 0xC000, 0x20); // addr lo
+        write_wram(&mut bus, 0xC001, 0xC0); // addr hi → 0xC020
+        execute(&mut cpu, &mut bus, MicroOp::WriteMem16BitAddr { src: Reg8::A });
+        assert_eq!(bus.read(0xC020), 0x99);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC002);
     }
 
@@ -1018,10 +1017,10 @@ mod tests {
 
     #[test]
     fn e2e_adc_with_carry_set() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
         cpu.register_file.set_8bit(Reg8::F, FLAG_C); // carry = 1
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Adc, dest: Reg8::A, src: Operand8::Imm(0x05),
         });
         // 0x10 + 0x05 + 1 = 0x16
@@ -1030,10 +1029,10 @@ mod tests {
 
     #[test]
     fn e2e_adc_without_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
         cpu.register_file.set_8bit(Reg8::F, 0); // carry = 0
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Adc, dest: Reg8::A, src: Operand8::Imm(0x05),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x15);
@@ -1041,10 +1040,10 @@ mod tests {
 
     #[test]
     fn e2e_adc_overflow_sets_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0xFF);
         cpu.register_file.set_8bit(Reg8::F, FLAG_C);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Adc, dest: Reg8::A, src: Operand8::Imm(0x00),
         });
         // 0xFF + 0 + 1 = 0x100 → A=0x00, C=1, Z=1
@@ -1056,10 +1055,10 @@ mod tests {
 
     #[test]
     fn e2e_adc_half_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x0F);
         cpu.register_file.set_8bit(Reg8::F, FLAG_C);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Adc, dest: Reg8::A, src: Operand8::Imm(0x00),
         });
         // 0x0F + 0 + 1 = 0x10, H should be set
@@ -1069,10 +1068,10 @@ mod tests {
 
     #[test]
     fn e2e_sbc_with_carry() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
         cpu.register_file.set_8bit(Reg8::F, FLAG_C);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sbc, dest: Reg8::A, src: Operand8::Imm(0x05),
         });
         // 0x10 - 0x05 - 1 = 0x0A
@@ -1081,10 +1080,10 @@ mod tests {
 
     #[test]
     fn e2e_sbc_underflow() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x00);
         cpu.register_file.set_8bit(Reg8::F, FLAG_C);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Sbc, dest: Reg8::A, src: Operand8::Imm(0x00),
         });
         // 0x00 - 0x00 - 1 = 0xFF, C=1, H=1
@@ -1096,9 +1095,9 @@ mod tests {
 
     #[test]
     fn e2e_cp_does_not_modify_a() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x42);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Cp, dest: Reg8::A, src: Operand8::Imm(0x42),
         });
         // A should remain 0x42 (CP doesn't store)
@@ -1111,9 +1110,9 @@ mod tests {
 
     #[test]
     fn e2e_cp_sets_carry_when_b_greater() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_8bit(Reg8::A, 0x10);
-        execute(&mut cpu, MicroOp::Alu8 {
+        execute(&mut cpu, &mut bus, MicroOp::Alu8 {
             kind: AluOpKind::Cp, dest: Reg8::A, src: Operand8::Imm(0x20),
         });
         assert_eq!(cpu.register_file.get_8bit(Reg8::A), 0x10); // unchanged
@@ -1124,15 +1123,15 @@ mod tests {
 
     #[test]
     fn e2e_stop_consumes_second_byte() {
-        let mut cpu = make_cpu();
+        let (mut cpu, mut bus) = make_cpu();
         cpu.register_file.set_16bit(Reg16::PC, 0xC000);
         // Place STOP's second byte (0x00) at 0xC000
-        write_wram(&mut cpu, 0xC000, 0x00);
+        write_wram(&mut bus, 0xC000, 0x00);
         // Execute both micro-ops: ReadImmediate8 (consumes 0x00), TriggerStop
         let ops = decode_instruction(0x10);
         assert_eq!(ops.len(), 2);
         for op in ops {
-            execute(&mut cpu, op);
+            execute(&mut cpu, &mut bus, op);
         }
         // PC should have advanced past the second byte
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0xC001);

@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use sm83::clock::ClockGovernor;
-use sm83::memory::mmu::MMU;
+use sm83::memory::bus::Bus;
 use sm83::system::GameBoy;
 use sm83::trace::Tracer;
 use std::{env, fs, path::Path, process, thread};
@@ -59,13 +59,13 @@ fn main() {
         Tracer::off()
     };
 
-    let mut mmu = MMU::new();
-    mmu.load_boot_rom(sm83::BOOT_ROM).unwrap();
+    let mut bus = Bus::new();
+    bus.load_boot_rom(sm83::BOOT_ROM).unwrap();
 
     let cartridge = load_file(Path::new(cart_path));
-    mmu.load_cartridge(&cartridge);
+    bus.load_cartridge(&cartridge);
 
-    let mut gb = GameBoy::new(mmu, tracer);
+    let mut gb = GameBoy::new(bus, tracer);
 
     if bench {
         // Benchmark: run governed for 5 seconds, report accuracy.
