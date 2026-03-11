@@ -1,16 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::Serialize;
-use sm83::cpu::registers::{Reg8, Reg16};
-use sm83::memory::bus::Bus;
-use sm83::memory::mmu::MMU;
-use sm83::system::GameBoy;
+use sm83::session::{CpuSnapshot, Session};
 use sm83::trace::Tracer;
 use std::sync::Mutex;
 use std::time::SystemTime;
 use tauri::State;
 
-struct Emulator(Mutex<Option<GameBoy>>);
+struct Emulator(Mutex<Session>);
 
 #[derive(Serialize)]
 struct CpuState {
@@ -25,64 +22,77 @@ struct CpuState {
     halted: bool,
 }
 
-fn read_state(gb: &GameBoy) -> CpuState {
-    let regs = &gb.cpu.register_file;
-    CpuState {
-        pc: regs.get_16bit(Reg16::PC),
-        sp: regs.get_16bit(Reg16::SP),
-        af: regs.get_16bit(Reg16::AF),
-        bc: regs.get_16bit(Reg16::BC),
-        de: regs.get_16bit(Reg16::DE),
-        hl: regs.get_16bit(Reg16::HL),
-        ir: regs.get_8bit(Reg8::IR),
-        ie: regs.get_8bit(Reg8::IE),
-        halted: matches!(gb.cpu.state, sm83::cpu::pipeline::PipelineState::Halted),
+impl From<CpuSnapshot> for CpuState {
+    fn from(s: CpuSnapshot) -> Self {
+        Self {
+            pc: s.pc,
+            sp: s.sp,
+            af: s.af,
+            bc: s.bc,
+            de: s.de,
+            hl: s.hl,
+            ir: s.ir,
+            ie: s.ie,
+            halted: s.halted,
+        }
     }
+}
+
+fn ok(snap: CpuSnapshot) -> Result<CpuState, String> {
+    Ok(snap.into())
+}
+
+fn ok_result(r: Result<CpuSnapshot, &str>) -> Result<CpuState, String> {
+    Ok(r.map_err(|e| e.to_string())?.into())
 }
 
 #[tauri::command]
 fn load_rom(emu: State<Emulator>, cart_rom: Vec<u8>) -> Result<CpuState, String> {
-    let mut mmu = MMU::new();
-    mmu.load_boot_rom(sm83::BOOT_ROM).unwrap();
-    mmu.load_cartridge(&cart_rom);
-    let gb = GameBoy::new(mmu, Tracer::off());
-    let state = read_state(&gb);
-    *emu.0.lock().unwrap() = Some(gb);
-    Ok(state)
+    let mut session = emu.0.lock().unwrap();
+    ok(session.load_rom(&cart_rom))
 }
 
 #[tauri::command]
 fn load_default_rom(emu: State<Emulator>) -> Result<CpuState, String> {
-    load_rom(emu, sm83::DEFAULT_ROM.to_vec())
+    let mut session = emu.0.lock().unwrap();
+    ok(session.load_default_rom())
 }
 
 #[tauri::command]
 fn step(emu: State<Emulator>, ticks: u32) -> Result<CpuState, String> {
-    let mut guard = emu.0.lock().unwrap();
-    let gb = guard.as_mut().ok_or("no ROM loaded")?;
-    gb.tick_n(ticks);
-    Ok(read_state(gb))
+    let mut session = emu.0.lock().unwrap();
+    ok_result(session.step(ticks))
+}
+
+#[tauri::command]
+fn tick_frame(emu: State<Emulator>, elapsed_ns: u64) -> Result<CpuState, String> {
+    let mut session = emu.0.lock().unwrap();
+    ok_result(session.tick_frame(elapsed_ns))
+}
+
+#[tauri::command]
+fn reset_governor(emu: State<Emulator>) -> Result<(), String> {
+    let mut session = emu.0.lock().unwrap();
+    session.reset_governor();
+    Ok(())
 }
 
 #[tauri::command]
 fn get_state(emu: State<Emulator>) -> Result<CpuState, String> {
-    let guard = emu.0.lock().unwrap();
-    let gb = guard.as_ref().ok_or("no ROM loaded")?;
-    Ok(read_state(gb))
+    let session = emu.0.lock().unwrap();
+    ok_result(session.cpu_snapshot())
 }
 
 #[tauri::command]
 fn read_memory(emu: State<Emulator>, addr: u16, length: u16) -> Result<Vec<u8>, String> {
-    let guard = emu.0.lock().unwrap();
-    let gb = guard.as_ref().ok_or("no ROM loaded")?;
-    let end = addr.saturating_add(length);
-    Ok((addr..end).map(|a| gb.cpu.bus.read(a)).collect())
+    let session = emu.0.lock().unwrap();
+    session.read_memory(addr, length).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn toggle_trace(emu: State<Emulator>) -> Result<String, String> {
-    let mut guard = emu.0.lock().unwrap();
-    let gb = guard.as_mut().ok_or("no ROM loaded")?;
+    let mut session = emu.0.lock().unwrap();
+    let gb = session.gameboy_mut().ok_or("no ROM loaded")?;
 
     if gb.cpu.tracer.enabled() {
         gb.cpu.tracer.flush();
@@ -104,20 +114,22 @@ fn toggle_trace(emu: State<Emulator>) -> Result<String, String> {
 
 #[tauri::command]
 fn reset(emu: State<Emulator>) {
-    let mut guard = emu.0.lock().unwrap();
-    if let Some(gb) = guard.as_mut() {
+    let mut session = emu.0.lock().unwrap();
+    if let Some(gb) = session.gameboy_mut() {
         gb.cpu.tracer.flush();
     }
-    *guard = None;
+    session.reset();
 }
 
 fn main() {
     tauri::Builder::default()
-        .manage(Emulator(Mutex::new(None)))
+        .manage(Emulator(Mutex::new(Session::new())))
         .invoke_handler(tauri::generate_handler![
             load_rom,
             load_default_rom,
             step,
+            tick_frame,
+            reset_governor,
             get_state,
             read_memory,
             toggle_trace,

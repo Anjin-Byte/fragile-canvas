@@ -1,6 +1,7 @@
 pub mod clock;
 pub mod cpu;
 pub mod memory;
+pub mod session;
 pub mod system;
 pub mod timer;
 pub mod trace;
