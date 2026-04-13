@@ -75,4 +75,10 @@ export const wasmBackend: EmulatorBackend = {
       emu = null;
     }
   },
+
+  async getFrame(): Promise<Uint8Array | null> {
+    if (!emu) return null;
+    const data = emu.getFrame();
+    return data ? new Uint8Array(data) : null;
+  },
 };

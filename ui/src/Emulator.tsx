@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { CpuState, EmulatorBackend } from "./types";
 import "./global.css";
 import "./Emulator.css";
@@ -13,6 +13,28 @@ function hex8(n: number) {
 
 function hexByte(b: number) {
   return b.toString(16).toUpperCase().padStart(2, "0");
+}
+
+const SCREEN_W = 160;
+const SCREEN_H = 144;
+
+// Classic DMG green palette: shade index → [R, G, B]
+const DMG_PALETTE: [number, number, number][] = [
+  [155, 188,  15], // 0 — lightest
+  [139, 172,  15], // 1
+  [ 48,  98,  48], // 2
+  [ 15,  56,  15], // 3 — darkest
+];
+
+function Screen({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement | null> }) {
+  return (
+    <canvas
+      ref={canvasRef}
+      width={SCREEN_W}
+      height={SCREEN_H}
+      className="screen"
+    />
+  );
 }
 
 const FLAG_NAMES = ["Z", "N", "H", "C"] as const;
@@ -105,6 +127,50 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
   const backendRef = useRef(backend);
   backendRef.current = backend;
 
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imgDataRef = useRef<ImageData | null>(null);
+
+  // Initialise the reusable ImageData once the canvas mounts.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    imgDataRef.current = ctx.createImageData(SCREEN_W, SCREEN_H);
+    // Fill with darkest DMG shade so the canvas isn't blank white.
+    const data = imgDataRef.current.data;
+    for (let i = 0; i < SCREEN_W * SCREEN_H; i++) {
+      const off = i * 4;
+      data[off] = DMG_PALETTE[3][0];
+      data[off + 1] = DMG_PALETTE[3][1];
+      data[off + 2] = DMG_PALETTE[3][2];
+      data[off + 3] = 255;
+    }
+    ctx.putImageData(imgDataRef.current, 0, 0);
+  }, [loaded]);
+
+  function blitFrame(shades: Uint8Array) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx || !imgDataRef.current) return;
+    const data = imgDataRef.current.data;
+    for (let i = 0; i < SCREEN_W * SCREEN_H; i++) {
+      const [r, g, b] = DMG_PALETTE[shades[i] & 3];
+      const off = i * 4;
+      data[off]     = r;
+      data[off + 1] = g;
+      data[off + 2] = b;
+      data[off + 3] = 255;
+    }
+    ctx.putImageData(imgDataRef.current, 0, 0);
+  }
+
+  async function updateFrame() {
+    const frameData = await backendRef.current.getFrame();
+    if (frameData) blitFrame(frameData);
+  }
+
   const startLoop = useCallback(() => {
     if (runningRef.current) return;
     runningRef.current = true;
@@ -119,9 +185,10 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
       const elapsedNs = BigInt(Math.round(dt * 1_000_000));
       backendRef.current
         .tickFrame(elapsedNs)
-        .then((state) => {
+        .then(async (state) => {
           if (!runningRef.current) return;
           setCpu(state);
+          await updateFrame();
           rafRef.current = requestAnimationFrame(frame);
         })
         .catch((e) => {
@@ -181,6 +248,7 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
     try {
       const state = await backend.step(ticks);
       setCpu(state);
+      await updateFrame();
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -210,6 +278,8 @@ export function Emulator({ backend }: { backend: EmulatorBackend }) {
         </div>
       ) : (
         <div className="debugger">
+          <Screen canvasRef={canvasRef} />
+
           <div className="controls">
             <button
               className={running ? "btn-active" : ""}

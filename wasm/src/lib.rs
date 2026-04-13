@@ -98,4 +98,13 @@ impl EmulatorWasm {
     pub fn drain_audio_samples(&mut self) -> Vec<f32> {
         self.session.drain_audio_samples()
     }
+
+    /// Drain the latest completed PPU frame.
+    ///
+    /// Returns a `Uint8Array` of 160×144 shade indices (0-3) when a new frame
+    /// is ready, or `undefined` if no frame has completed since the last call.
+    #[wasm_bindgen(js_name = getFrame)]
+    pub fn get_frame(&mut self) -> Option<Vec<u8>> {
+        self.session.drain_frame()
+    }
 }

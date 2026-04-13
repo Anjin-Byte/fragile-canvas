@@ -1,6 +1,8 @@
 use crate::apu::Apu;
+use crate::memory::cartridge::Cartridge;
 use crate::memory::dma::DmaController;
 use crate::ppu::Ppu;
+use crate::serial::{self, Serial};
 use crate::timer::{self, Timer};
 
 const BOOT_ROM_SIZE: usize = 0x100;
@@ -10,10 +12,8 @@ const BOOT_ROM_UNMAP: u16 = 0xFF50;
 pub struct Bus {
     boot_rom: [u8; BOOT_ROM_SIZE],
     boot_rom_mapped: bool,
-    rom_bank_0: [u8; 0x4000],
-    switchable_rom_bank: [u8; 0x4000],
+    pub cart: Cartridge,
     vram: [u8; 0x2000],
-    external_ram: [u8; 0x2000],
     wram: [u8; 0x2000],
     oam: [u8; 0xA0],
     io_registers: [u8; 0x80],
@@ -24,6 +24,7 @@ pub struct Bus {
     /// without going through the CPU bus — matching real SoC behaviour.
     pub if_reg: u8,
     pub timer: Timer,
+    pub serial: Serial,
     pub apu: Apu,
     pub ppu: Ppu,
     pub dma: DmaController,
@@ -34,10 +35,8 @@ impl Bus {
         Self {
             boot_rom: [0; BOOT_ROM_SIZE],
             boot_rom_mapped: true,
-            rom_bank_0: [0; 0x4000],
-            switchable_rom_bank: [0; 0x4000],
+            cart: Cartridge::empty(),
             vram: [0; 0x2000],
-            external_ram: [0; 0x2000],
             wram: [0; 0x2000],
             oam: [0; 0xA0],
             io_registers: [0; 0x80],
@@ -45,6 +44,7 @@ impl Bus {
             interrupt_enable_register: 0,
             if_reg: 0,
             timer: Timer::new(),
+            serial: Serial::new(),
             apu: Apu::new(),
             ppu: Ppu::new(),
             dma: DmaController::new(),
@@ -65,19 +65,17 @@ impl Bus {
     }
 
     pub fn load_cartridge(&mut self, data: &[u8]) {
-        let bank_0_end = data.len().min(0x4000);
-        self.rom_bank_0[..bank_0_end].copy_from_slice(&data[..bank_0_end]);
-
-        if data.len() > 0x4000 {
-            let bank_1_end = (data.len() - 0x4000).min(0x4000);
-            self.switchable_rom_bank[..bank_1_end]
-                .copy_from_slice(&data[0x4000..0x4000 + bank_1_end]);
-        }
+        self.cart = Cartridge::new(data);
     }
 
     /// Returns true if the address belongs to the timer (FF04-FF07).
     fn is_timer_addr(addr: u16) -> bool {
         matches!(addr, timer::DIV_ADDR..=timer::TAC_ADDR)
+    }
+
+    /// Returns true if the address belongs to the serial port (FF01-FF02).
+    fn is_serial_addr(addr: u16) -> bool {
+        matches!(addr, serial::SB_ADDR..=serial::SC_ADDR)
     }
 
     /// Returns true if the address belongs to the APU (FF10-FF3F).
@@ -100,14 +98,26 @@ impl Bus {
 
         match addr {
             0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
-            0x0000..=0x3FFF => self.rom_bank_0[addr as usize],
-            0x4000..=0x7FFF => self.switchable_rom_bank[addr as usize - 0x4000],
-            0x8000..=0x9FFF => self.vram[addr as usize - 0x8000],
-            0xA000..=0xBFFF => self.external_ram[addr as usize - 0xA000],
+            0x0000..=0x7FFF => self.cart.read(addr),
+            // VRAM inaccessible to CPU during Mode 3 (PPU drawing).
+            0x8000..=0x9FFF => {
+                if self.ppu.lcdc & 0x80 != 0 && self.ppu.mode() == 3 {
+                    return 0xFF;
+                }
+                self.vram[addr as usize - 0x8000]
+            }
+            0xA000..=0xBFFF => self.cart.read(addr),
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000],
-            0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00],
+            // OAM inaccessible to CPU during Mode 2 (OAM scan) and Mode 3 (drawing).
+            0xFE00..=0xFE9F => {
+                if self.ppu.lcdc & 0x80 != 0 && matches!(self.ppu.mode(), 2 | 3) {
+                    return 0xFF;
+                }
+                self.oam[addr as usize - 0xFE00]
+            }
             0xFF0F => self.if_reg,
             0xFF46 => self.dma.source_page,
+            0xFF00..=0xFF7F if Self::is_serial_addr(addr) => self.serial.read(addr),
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.read(addr),
             0xFF00..=0xFF7F if Self::is_apu_addr(addr) => self.apu.read(addr),
             0xFF00..=0xFF7F if Self::is_ppu_addr(addr) => self.ppu.read(addr),
@@ -120,14 +130,27 @@ impl Bus {
 
     pub fn write(&mut self, addr: u16, value: u8) {
         match addr {
-            0x0000..=0x3FFF => (), // ROM is read-only
-            0x4000..=0x7FFF => (), // likewise - used for bank switching
-            0x8000..=0x9FFF => self.vram[addr as usize - 0x8000] = value,
-            0xA000..=0xBFFF => self.external_ram[addr as usize - 0xA000] = value,
+            // ROM space: MBC intercepts writes as register commands.
+            0x0000..=0x7FFF => self.cart.write(addr, value),
+            // VRAM writes ignored by CPU during Mode 3 (PPU holds the bus).
+            0x8000..=0x9FFF => {
+                if self.ppu.lcdc & 0x80 != 0 && self.ppu.mode() == 3 {
+                    return;
+                }
+                self.vram[addr as usize - 0x8000] = value;
+            }
+            0xA000..=0xBFFF => self.cart.write(addr, value),
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000] = value,
-            0xFE00..=0xFE9F => self.oam[addr as usize - 0xFE00] = value,
+            // OAM writes ignored by CPU during Mode 2 and Mode 3.
+            0xFE00..=0xFE9F => {
+                if self.ppu.lcdc & 0x80 != 0 && matches!(self.ppu.mode(), 2 | 3) {
+                    return;
+                }
+                self.oam[addr as usize - 0xFE00] = value;
+            }
             0xFF0F => self.if_reg = value,
             0xFF46 => self.dma.trigger(value),
+            0xFF00..=0xFF7F if Self::is_serial_addr(addr) => self.serial.write(addr, value),
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.write(addr, value),
             0xFF00..=0xFF7F if Self::is_apu_addr(addr) => self.apu.write(addr, value),
             0xFF00..=0xFF7F if Self::is_ppu_addr(addr) => self.ppu.write(addr, value),
@@ -140,6 +163,40 @@ impl Bus {
             0xFF80..=0xFFFE => self.hram[addr as usize - 0xFF80] = value,
             0xFFFF => self.interrupt_enable_register = value,
             _ => (),
+        }
+    }
+
+    /// Advance the PPU by one T-cycle (dot), fire any pending IRQs into IF,
+    /// and render the scanline when the Mode3→HBlank transition occurs.
+    ///
+    /// Rendering requires simultaneous access to `ppu`, `vram`, and `oam`.
+    /// Rust allows this via split-field borrows — each field is a distinct
+    /// memory location so there is no aliasing.
+    pub fn ppu_tick(&mut self) {
+        self.ppu.tick();
+
+        // VBlank and STAT interrupts are internal SoC signals — they write
+        // directly to IF rather than going through the CPU bus.
+        if self.ppu.vblank_irq {
+            self.ppu.vblank_irq = false;
+            self.if_reg |= 0x01;
+        }
+        if self.ppu.stat_irq {
+            self.ppu.stat_irq = false;
+            self.if_reg |= 0x02;
+        }
+
+        // Mode 2 start: compute Mode 3 end dot from sprite count + scroll + window.
+        if self.ppu.oam_scan_ready {
+            self.ppu.oam_scan_ready = false;
+            let (oam, ppu) = (&self.oam, &mut self.ppu);
+            ppu.scan_oam_and_compute_mode3_end(oam);
+        }
+
+        if self.ppu.scanline_ready {
+            self.ppu.scanline_ready = false;
+            let (vram, oam, ppu) = (&self.vram, &self.oam, &mut self.ppu);
+            ppu.render_scanline(vram, oam);
         }
     }
 
@@ -167,10 +224,9 @@ impl Bus {
     fn dma_read_source(&self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x00FF if self.boot_rom_mapped => self.boot_rom[addr as usize],
-            0x0000..=0x3FFF => self.rom_bank_0[addr as usize],
-            0x4000..=0x7FFF => self.switchable_rom_bank[addr as usize - 0x4000],
+            0x0000..=0x7FFF => self.cart.read(addr),
             0x8000..=0x9FFF => self.vram[addr as usize - 0x8000],
-            0xA000..=0xBFFF => self.external_ram[addr as usize - 0xA000],
+            0xA000..=0xBFFF => self.cart.read(addr),
             // WRAM is internal but accessible to the DMA unit; most games
             // store sprite tables in WRAM and DMA from there.
             0xC000..=0xDFFF => self.wram[addr as usize - 0xC000],
@@ -305,6 +361,159 @@ mod tests {
         tick_dma(&mut bus, 161);
         assert!(!bus.dma.active);
         assert_eq!(bus.read(0xFF46), 0xC5);
+    }
+
+    // ── PPU VRAM/OAM access restriction tests ────────────────────────────────
+
+    /// Advance the bus PPU to exactly Mode 3 (dot 81–251 on line 0).
+    /// Returns the bus with LCDC=0x80 and PPU in Mode 3.
+    fn bus_in_mode3() -> Bus {
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        // Tick to dot 81 (first dot of Mode 3 on line 0, baseline mode3_end=252).
+        for _ in 0..81 {
+            bus.ppu_tick();
+        }
+        assert_eq!(bus.ppu.mode(), 3, "should be in Mode 3 for test setup");
+        bus
+    }
+
+    /// Advance the bus PPU to Mode 2 (dot 1–79 on line 0).
+    fn bus_in_mode2() -> Bus {
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        // Tick to dot 1 (first dot of Mode 2 on line 0).
+        bus.ppu_tick();
+        assert_eq!(bus.ppu.mode(), 2, "should be in Mode 2 for test setup");
+        bus
+    }
+
+    #[test]
+    fn vram_readable_in_mode0() {
+        // Mode 0 (HBlank): advance past Mode 3 on line 0 (dot 253).
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        for _ in 0..253 {
+            bus.ppu_tick();
+        }
+        assert_eq!(bus.ppu.mode(), 0);
+        bus.vram[0] = 0x42;
+        assert_eq!(bus.read(0x8000), 0x42, "VRAM readable in Mode 0");
+    }
+
+    #[test]
+    fn vram_readable_in_mode1() {
+        // Mode 1 (VBlank): advance to line 144.
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        let vblank_dot = 456 * 144 + 1;
+        for _ in 0..vblank_dot {
+            bus.ppu_tick();
+        }
+        assert_eq!(bus.ppu.mode(), 1);
+        bus.vram[0] = 0x55;
+        assert_eq!(bus.read(0x8000), 0x55, "VRAM readable in Mode 1");
+    }
+
+    #[test]
+    fn vram_readable_in_mode2() {
+        let mut bus = bus_in_mode2();
+        bus.vram[0] = 0xAB;
+        assert_eq!(bus.read(0x8000), 0xAB, "VRAM readable in Mode 2");
+    }
+
+    #[test]
+    fn vram_returns_0xff_during_mode3() {
+        let mut bus = bus_in_mode3();
+        bus.vram[0] = 0x42;
+        assert_eq!(bus.read(0x8000), 0xFF, "VRAM read should return 0xFF during Mode 3");
+        // Entire VRAM range should be blocked.
+        bus.vram[0x1FFF] = 0x55;
+        assert_eq!(bus.read(0x9FFF), 0xFF, "VRAM at 0x9FFF should return 0xFF during Mode 3");
+    }
+
+    #[test]
+    fn vram_write_ignored_during_mode3() {
+        let mut bus = bus_in_mode3();
+        bus.vram[0] = 0x99;
+        bus.write(0x8000, 0xAA); // should be silently ignored
+        assert_eq!(bus.vram[0], 0x99, "VRAM write during Mode 3 must be ignored");
+    }
+
+    #[test]
+    fn vram_accessible_when_lcd_off() {
+        let mut bus = Bus::new();
+        // LCD off (LCDC bit 7 = 0): VRAM always accessible.
+        bus.ppu.lcdc = 0x00;
+        bus.vram[0] = 0x77;
+        assert_eq!(bus.read(0x8000), 0x77, "VRAM accessible when LCD is off");
+        bus.write(0x8000, 0x88);
+        assert_eq!(bus.vram[0], 0x88, "VRAM writable when LCD is off");
+    }
+
+    #[test]
+    fn oam_readable_in_mode0() {
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        for _ in 0..253 {
+            bus.ppu_tick();
+        }
+        assert_eq!(bus.ppu.mode(), 0);
+        bus.oam[0] = 0x33;
+        assert_eq!(bus.read(0xFE00), 0x33, "OAM readable in Mode 0");
+    }
+
+    #[test]
+    fn oam_readable_in_mode1() {
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x80;
+        let vblank_dot = 456 * 144 + 1;
+        for _ in 0..vblank_dot {
+            bus.ppu_tick();
+        }
+        assert_eq!(bus.ppu.mode(), 1);
+        bus.oam[0] = 0x44;
+        assert_eq!(bus.read(0xFE00), 0x44, "OAM readable in Mode 1");
+    }
+
+    #[test]
+    fn oam_returns_0xff_during_mode2() {
+        let mut bus = bus_in_mode2();
+        bus.oam[0] = 0xBB;
+        assert_eq!(bus.read(0xFE00), 0xFF, "OAM read should return 0xFF during Mode 2");
+    }
+
+    #[test]
+    fn oam_write_ignored_during_mode2() {
+        let mut bus = bus_in_mode2();
+        bus.oam[0] = 0xCC;
+        bus.write(0xFE00, 0xDD);
+        assert_eq!(bus.oam[0], 0xCC, "OAM write during Mode 2 must be ignored");
+    }
+
+    #[test]
+    fn oam_returns_0xff_during_mode3() {
+        let mut bus = bus_in_mode3();
+        bus.oam[0] = 0xBE;
+        assert_eq!(bus.read(0xFE00), 0xFF, "OAM read should return 0xFF during Mode 3");
+    }
+
+    #[test]
+    fn oam_write_ignored_during_mode3() {
+        let mut bus = bus_in_mode3();
+        bus.oam[0] = 0xEF;
+        bus.write(0xFE00, 0x12);
+        assert_eq!(bus.oam[0], 0xEF, "OAM write during Mode 3 must be ignored");
+    }
+
+    #[test]
+    fn oam_accessible_when_lcd_off() {
+        let mut bus = Bus::new();
+        bus.ppu.lcdc = 0x00;
+        bus.oam[0] = 0x66;
+        assert_eq!(bus.read(0xFE00), 0x66, "OAM accessible when LCD is off");
+        bus.write(0xFE00, 0x77);
+        assert_eq!(bus.oam[0], 0x77, "OAM writable when LCD is off");
     }
 
     #[test]

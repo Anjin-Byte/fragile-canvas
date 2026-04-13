@@ -35,7 +35,10 @@ fn snapshot(gb: &GameBoy) -> CpuSnapshot {
         de: regs.get_16bit(Reg16::DE),
         hl: regs.get_16bit(Reg16::HL),
         ir: regs.get_8bit(Reg8::IR),
-        ie: regs.get_8bit(Reg8::IE),
+        // IE is memory-mapped at 0xFFFF — read from the bus so the displayed
+        // value reflects what the game actually wrote, not the stale register
+        // file field.
+        ie: gb.bus.read(0xFFFF),
         halted: gb.cpu.halted,
     }
 }
@@ -122,6 +125,21 @@ impl Session {
         self.gb.as_mut()
     }
 
+    /// Drain the latest completed frame from the PPU framebuffer.
+    ///
+    /// Returns `Some(Vec<u8>)` containing 160×144 shade indices (0-3, one byte
+    /// per pixel, row-major) when a new frame is ready, then clears the flag.
+    /// Returns `None` if no ROM is loaded or the PPU has not completed a frame
+    /// since the last call.
+    pub fn drain_frame(&mut self) -> Option<Vec<u8>> {
+        let gb = self.gb.as_mut()?;
+        if !gb.bus.ppu.frame_ready {
+            return None;
+        }
+        gb.bus.ppu.frame_ready = false;
+        Some(gb.bus.ppu.completed_frame.to_vec())
+    }
+
     /// Drain all buffered audio samples (interleaved L,R,L,R... f32).
     /// Returns an empty vec if no ROM is loaded.
     pub fn drain_audio_samples(&mut self) -> Vec<f32> {
@@ -130,6 +148,100 @@ impl Session {
             gb.bus.apu.drain_audio_samples(&mut out);
         }
         out
+    }
+
+    /// Return the serial port output buffer as a UTF-8 string (lossy).
+    ///
+    /// Blargg test ROMs write their pass/fail results to the serial port
+    /// as ASCII text, so this is the primary way to check test outcomes.
+    pub fn serial_output_as_string(&self) -> String {
+        match self.gb.as_ref() {
+            Some(gb) => String::from_utf8_lossy(&gb.bus.serial.output_buffer).into_owned(),
+            None => String::new(),
+        }
+    }
+
+    /// Load a cartridge ROM, skipping the boot ROM entirely.
+    ///
+    /// Sets CPU registers and bus state to the exact DMG post-boot values
+    /// so execution starts at PC=0x0100.  This saves ~2.2M M-cycles of
+    /// boot ROM logo animation per load.
+    pub fn load_rom_no_boot(&mut self, cart_rom: &[u8]) -> CpuSnapshot {
+        let mut bus = Bus::new();
+        bus.load_cartridge(cart_rom);
+        // Unmap the boot ROM (write bit 0 to 0xFF50)
+        bus.write(0xFF50, 0x01);
+        let mut gb = GameBoy::new(bus, Tracer::off());
+        // DMG post-boot register state (verified against hardware)
+        gb.cpu.register_file.set_8bit(Reg8::A, 0x01);
+        gb.cpu.register_file.set_8bit(Reg8::F, 0xB0);
+        gb.cpu.register_file.set_8bit(Reg8::B, 0x00);
+        gb.cpu.register_file.set_8bit(Reg8::C, 0x13);
+        gb.cpu.register_file.set_8bit(Reg8::D, 0x00);
+        gb.cpu.register_file.set_8bit(Reg8::E, 0xD8);
+        gb.cpu.register_file.set_8bit(Reg8::H, 0x01);
+        gb.cpu.register_file.set_8bit(Reg8::L, 0x4D);
+        gb.cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
+        gb.cpu.register_file.set_16bit(Reg16::PC, 0x0100);
+        let snap = snapshot(&gb);
+        self.gb = Some(gb);
+        self.gov = ClockGovernor::new();
+        snap
+    }
+
+    /// Snapshot all relevant I/O register state in one call.
+    pub fn io_snapshot(&self) -> Result<IoSnapshot, &'static str> {
+        let gb = self.gb.as_ref().ok_or("no ROM loaded")?;
+        Ok(IoSnapshot {
+            if_reg: gb.bus.if_reg,
+            ie: gb.bus.read(0xFFFF),
+            lcdc: gb.bus.read(0xFF40),
+            stat: gb.bus.read(0xFF41),
+            ly: gb.bus.read(0xFF44),
+            lyc: gb.bus.read(0xFF45),
+            div: gb.bus.read(0xFF04),
+            tima: gb.bus.read(0xFF05),
+            tma: gb.bus.read(0xFF06),
+            tac: gb.bus.read(0xFF07),
+            sb: gb.bus.read(0xFF01),
+            sc: gb.bus.read(0xFF02),
+            joyp: gb.bus.read(0xFF00),
+            ime: gb.cpu.ime,
+        })
+    }
+}
+
+/// Snapshot of I/O register state for debugging.
+#[derive(Debug, Clone)]
+pub struct IoSnapshot {
+    pub if_reg: u8,
+    pub ie: u8,
+    pub lcdc: u8,
+    pub stat: u8,
+    pub ly: u8,
+    pub lyc: u8,
+    pub div: u8,
+    pub tima: u8,
+    pub tma: u8,
+    pub tac: u8,
+    pub sb: u8,
+    pub sc: u8,
+    pub joyp: u8,
+    pub ime: bool,
+}
+
+impl std::fmt::Display for IoSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "IF={:02X} IE={:02X} IME={} | LCDC={:02X} STAT={:02X} LY={:02X} LYC={:02X} | \
+             DIV={:02X} TIMA={:02X} TMA={:02X} TAC={:02X} | SB={:02X} SC={:02X} | P1={:02X}",
+            self.if_reg, self.ie, self.ime as u8,
+            self.lcdc, self.stat, self.ly, self.lyc,
+            self.div, self.tima, self.tma, self.tac,
+            self.sb, self.sc,
+            self.joyp,
+        )
     }
 }
 

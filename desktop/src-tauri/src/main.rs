@@ -113,6 +113,12 @@ fn toggle_trace(emu: State<Emulator>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_frame(emu: State<Emulator>) -> Option<Vec<u8>> {
+    let mut session = emu.0.lock().unwrap();
+    session.drain_frame()
+}
+
+#[tauri::command]
 fn drain_audio_samples(emu: State<Emulator>) -> Vec<f32> {
     let mut session = emu.0.lock().unwrap();
     session.drain_audio_samples()
@@ -139,6 +145,7 @@ fn main() {
             get_state,
             read_memory,
             toggle_trace,
+            get_frame,
             drain_audio_samples,
             reset,
         ])

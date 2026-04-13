@@ -1,7 +1,9 @@
 pub mod alu;
 pub mod decoder;
 pub mod interrupts;
+pub mod mcycle_dispatch;
 pub mod microcode;
+pub mod pipeline;
 pub mod registers;
 
 use crate::memory::bus::Bus;
@@ -21,6 +23,29 @@ pub struct CPU {
     /// and to choose taken vs not-taken cycle counts.
     pub condition_taken: bool,
     pub tracer: Tracer,
+
+    // ── M-cycle state machine fields ─────────────────────────────────
+    // These track progress within multi-M-cycle instructions for the
+    // new `step_m()` pipeline.  See `assets/docs/m_cycle_design/`.
+
+    /// Opcode being executed. 0x000-0x0FF = base, 0x100-0x1FF = CB.
+    current_opcode: u16,
+    /// Which M-cycle of the current instruction (0 = ready to fetch).
+    mcycle: u8,
+    /// Temporary byte storage for values spanning M-cycles.
+    temp_lo: u8,
+    temp_hi: u8,
+    /// Assembled 16-bit address from temp_lo/temp_hi.
+    temp_addr: u16,
+    /// True when executing the 5-M-cycle interrupt dispatch sequence.
+    in_interrupt_dispatch: bool,
+    /// Interrupt vector for the current dispatch.
+    interrupt_vector: u16,
+    /// HALT bug: when HALT executes with IME=0 and an interrupt pending,
+    /// the CPU wakes without servicing the interrupt and the PC fails to
+    /// increment on the next fetch, causing the following byte to be read
+    /// twice.  This flag is consumed after one fetch.
+    halt_bug_active: bool,
 }
 
 impl CPU {
@@ -32,6 +57,14 @@ impl CPU {
             ime_defer: false,
             condition_taken: true,
             tracer,
+            current_opcode: 0,
+            mcycle: 0,
+            temp_lo: 0,
+            temp_hi: 0,
+            temp_addr: 0,
+            in_interrupt_dispatch: false,
+            interrupt_vector: 0,
+            halt_bug_active: false,
         }
     }
 
@@ -44,7 +77,9 @@ impl CPU {
     pub fn tick(&mut self, bus: &mut Bus) -> u8 {
         // 1. Check for pending interrupts (runs before instruction fetch).
         //    An interrupt wakes the CPU from HALT regardless of IME.
-        let ie = self.register_file.get_8bit(Reg8::IE);
+        //    IE is memory-mapped at 0xFFFF; read it from the bus so that
+        //    game writes via LD (0xFFFF),A are immediately visible here.
+        let ie = bus.read(0xFFFF);
         let if_reg = bus.read(0xFF0F);
         let pending = ie & if_reg & 0x1F;
 
@@ -145,6 +180,126 @@ impl CPU {
             decoder::taken_t_cycles(opcode)
         } else {
             decoder::t_cycles(opcode)
+        }
+    }
+
+    /// Execute exactly one M-cycle (4 T-cycles) of CPU work.
+    ///
+    /// Returns `MCycleResult::Continue` if the instruction is still in
+    /// progress, `InstructionComplete` when it finishes, or `HaltBurn`
+    /// if the CPU is halted and no interrupt woke it.
+    pub fn step_m(&mut self, bus: &mut Bus) -> pipeline::MCycleResult {
+        // ── Interrupt dispatch (5-cycle sequence) ──
+        if self.in_interrupt_dispatch {
+            return self.step_interrupt(bus);
+        }
+
+        // ── HALT ──
+        if self.halted {
+            let ie = bus.read(0xFFFF);
+            let pending = ie & bus.if_reg & 0x1F;
+            if pending != 0 {
+                self.halted = false;
+                if self.ime {
+                    self.begin_interrupt_dispatch(bus);
+                    return self.step_interrupt(bus);
+                }
+                // Wake without IME: fall through to fetch next instruction
+            } else {
+                return pipeline::MCycleResult::HaltBurn;
+            }
+        }
+
+        // ── M-cycle 0: fetch next opcode ──
+        if self.mcycle == 0 {
+            // Check for pending interrupts before fetch.
+            // Note: EI defer is NOT consumed here — the instruction after EI
+            // must execute fully with IME=0.  The defer is consumed when that
+            // instruction completes (see InstructionComplete handling below).
+            if self.ime {
+                let ie = bus.read(0xFFFF);
+                let pending = ie & bus.if_reg & 0x1F;
+                if pending != 0 {
+                    self.begin_interrupt_dispatch(bus);
+                    return self.step_interrupt(bus);
+                }
+            }
+
+            // Fetch opcode
+            let pc = self.register_file.get_16bit(Reg16::PC);
+            let opcode = bus.read(pc);
+            // HALT bug: suppress the PC increment for one fetch
+            if self.halt_bug_active {
+                self.halt_bug_active = false;
+            } else {
+                self.register_file.inc16(Reg16::PC);
+            }
+
+            // CB prefix: need another fetch cycle
+            if opcode == 0xCB {
+                self.current_opcode = 0xCB00;
+                self.mcycle = 1;
+                return pipeline::MCycleResult::Continue;
+            }
+
+            self.current_opcode = opcode as u16;
+
+            // 1-M instructions complete immediately during fetch
+            if self.is_single_mcycle(opcode) {
+                self.execute_m1(opcode, bus);
+                // Consume EI defer after the instruction completes.
+                // This ensures EI → HALT sees IME=0 during HALT, and
+                // IME becomes 1 only at the start of the NEXT instruction.
+                if self.ime_defer {
+                    self.ime_defer = false;
+                    self.ime = true;
+                }
+                return pipeline::MCycleResult::InstructionComplete {
+                    opcode: opcode as u16,
+                };
+            }
+
+            // Multi-M instruction: advance to M2
+            self.mcycle = 1;
+            return pipeline::MCycleResult::Continue;
+        }
+
+        // ── M-cycles 1+: per-opcode dispatch ──
+        let result = self.execute_mcycle(bus);
+        if matches!(result, pipeline::MCycleResult::InstructionComplete { .. }) {
+            self.mcycle = 0;
+            // Consume EI defer after instruction completes.
+            if self.ime_defer {
+                self.ime_defer = false;
+                self.ime = true;
+            }
+        } else {
+            self.mcycle += 1;
+        }
+        result
+    }
+
+    /// Returns true if the opcode is a 1-M-cycle instruction (completes
+    /// during the fetch cycle with no additional bus accesses).
+    fn is_single_mcycle(&self, opcode: u8) -> bool {
+        match opcode {
+            0x00 => true, // NOP
+            0x10 => true, // STOP
+            0x76 => true, // HALT
+            0xF3 => true, // DI
+            0xFB => true, // EI
+            0xE9 => true, // JP HL
+            0x27 | 0x2F | 0x37 | 0x3F => true, // DAA, CPL, SCF, CCF
+            0x07 | 0x0F | 0x17 | 0x1F => true, // RLCA, RRCA, RLA, RRA
+            // INC r (not INC (HL) = 0x34)
+            0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x3C => true,
+            // DEC r (not DEC (HL) = 0x35)
+            0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x3D => true,
+            // LD r, r' (0x40-0x7F excluding 0x76 HALT and column 6 (HL) loads)
+            op @ 0x40..=0x7F if op != 0x76 && (op & 0x07) != 6 && ((op >> 3) & 0x07) != 6 => true,
+            // ALU A, r (0x80-0xBF excluding column 6)
+            op @ 0x80..=0xBF if (op & 0x07) != 6 => true,
+            _ => false,
         }
     }
 }

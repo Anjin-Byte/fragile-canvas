@@ -3,10 +3,12 @@
 /// Owns the CPU and Bus as sibling fields and orchestrates lock-step
 /// ticking of all subsystems.
 ///
-/// `cpu.tick()` executes one full instruction and returns the number of
-/// T-cycles consumed.  We then advance the timer, APU, and PPU by that
-/// many T-cycles.
+/// `cpu.step_m()` executes one M-cycle (4 T-cycles) at a time.  After
+/// each M-cycle, all subsystems (timer, PPU, APU, serial, DMA) advance
+/// by 4 T-cycles.  This gives cycle-accurate interleaving — subsystems
+/// see intermediate CPU state between M-cycles of multi-cycle instructions.
 
+use crate::cpu::pipeline::MCycleResult;
 use crate::cpu::CPU;
 use crate::memory::bus::Bus;
 use crate::trace::Tracer;
@@ -27,12 +29,25 @@ impl GameBoy {
         }
     }
 
-    /// Execute one CPU instruction and advance all subsystems by the
-    /// resulting T-cycle count.  Returns the number of T-cycles consumed.
+    /// Execute one CPU instruction with per-M-cycle subsystem ticking.
+    /// Returns the total number of T-cycles consumed.
+    ///
+    /// Each M-cycle: `cpu.step_m()` does one bus operation, then all
+    /// subsystems advance by 4 T-cycles.  This loop continues until the
+    /// instruction completes (or a HALT cycle burns).
     pub fn tick(&mut self) -> u8 {
-        let t_cycles = self.cpu.tick(&mut self.bus);
-        self.advance_subsystems(t_cycles);
-        t_cycles
+        let mut total_t: u8 = 0;
+        loop {
+            let result = self.cpu.step_m(&mut self.bus);
+            self.advance_subsystems(4);
+            total_t += 4;
+            match result {
+                MCycleResult::Continue => continue,
+                MCycleResult::InstructionComplete { .. }
+                | MCycleResult::HaltBurn => break,
+            }
+        }
+        total_t
     }
 
     /// Advance timer, APU, PPU, and DMA by `t` T-cycles.
@@ -50,20 +65,20 @@ impl GameBoy {
                 self.bus.if_reg |= 1 << 2; // Timer interrupt: IF bit 2
             }
 
+            // Serial port ticks every T-cycle (internal clock only).
+            self.bus.serial.tick();
+            if self.bus.serial.interrupt_pending {
+                self.bus.serial.interrupt_pending = false;
+                self.bus.if_reg |= 1 << 3; // Serial interrupt: IF bit 3
+            }
+
             // APU frame sequencer (clocked by DIV-APU falling edge).
             let div_fell = self.bus.timer.div_apu_fell();
             self.bus.apu.tick(div_fell);
 
-            // PPU — one dot per T-cycle.
-            self.bus.ppu.tick();
-            if self.bus.ppu.vblank_irq {
-                self.bus.ppu.vblank_irq = false;
-                self.bus.if_reg |= 0x01; // VBlank: IF bit 0
-            }
-            if self.bus.ppu.stat_irq {
-                self.bus.ppu.stat_irq = false;
-                self.bus.if_reg |= 0x02; // STAT: IF bit 1
-            }
+            // PPU — one dot per T-cycle.  ppu_tick() handles IRQ wiring and
+            // invokes render_scanline() at the Mode3→HBlank transition.
+            self.bus.ppu_tick();
 
             // DMA ticks once per M-cycle (every 4 T-cycles).
             if i % 4 == 3 {

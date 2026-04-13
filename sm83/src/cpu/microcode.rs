@@ -1772,7 +1772,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = false;
-        cpu.register_file.set_8bit(Reg8::IE, 0x01);
+        bus.write(0xFFFF, 0x01); // IE=1 (memory-mapped)
         bus.write(0xFF0F, 0x01);
         // Put a NOP at PC=0 so tick has something to execute
         bus.write(0x0000, 0x00);
@@ -1788,7 +1788,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x1F);
+        bus.write(0xFFFF, 0x1F); // IE=all (memory-mapped)
         bus.write(0xFF0F, 0x00);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         bus.write(0x0000, 0x00); // NOP
@@ -1803,7 +1803,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x01);
+        bus.write(0xFFFF, 0x01); // IE=VBlank (memory-mapped)
         bus.write(0xFF0F, 0x01);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         cpu.register_file.set_16bit(Reg16::PC, 0x1234);
@@ -1826,7 +1826,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x04);
+        bus.write(0xFFFF, 0x04); // IE=Timer (memory-mapped)
         bus.write(0xFF0F, 0x04);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
@@ -1841,7 +1841,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x05); // VBlank + Timer
+        bus.write(0xFFFF, 0x05); // IE=VBlank+Timer (memory-mapped)
         bus.write(0xFF0F, 0x05);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
@@ -1864,7 +1864,7 @@ mod tests {
             let mut cpu = CPU::new(crate::trace::Tracer::off());
             let mut bus = Bus::new();
             cpu.ime = true;
-            cpu.register_file.set_8bit(Reg8::IE, mask);
+            bus.write(0xFFFF, mask); // IE (memory-mapped)
             bus.write(0xFF0F, mask);
             cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
@@ -1882,7 +1882,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x1F);
+        bus.write(0xFFFF, 0x1F); // IE=all (memory-mapped)
         bus.write(0xFF0F, 0x1F);
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
@@ -1896,7 +1896,7 @@ mod tests {
         let mut cpu = CPU::new(crate::trace::Tracer::off());
         let mut bus = Bus::new();
         cpu.ime = true;
-        cpu.register_file.set_8bit(Reg8::IE, 0x00); // nothing enabled
+        bus.write(0xFFFF, 0x00); // IE=none (memory-mapped, also the default)
         bus.write(0xFF0F, 0xE0);     // only upper bits set
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
         bus.write(0x0000, 0x00); // NOP

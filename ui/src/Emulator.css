@@ -23,6 +23,17 @@ h1 {
   gap: 1rem;
 }
 
+/* Screen */
+
+.screen {
+  display: block;
+  width: 480px;   /* 160 × 3 */
+  height: 432px;  /* 144 × 3 */
+  image-rendering: pixelated;
+  margin-bottom: 1rem;
+  border: 1px solid #333;
+}
+
 /* Controls */
 
 .controls {

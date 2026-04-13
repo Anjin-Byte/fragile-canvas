@@ -54,4 +54,9 @@ export const tauriBackend: EmulatorBackend = {
     await audio.close();
     await invoke("reset");
   },
+
+  async getFrame(): Promise<Uint8Array | null> {
+    const data = await invoke<number[] | null>("get_frame");
+    return data ? new Uint8Array(data) : null;
+  },
 };

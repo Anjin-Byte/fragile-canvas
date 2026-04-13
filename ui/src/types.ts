@@ -19,4 +19,7 @@ export interface EmulatorBackend {
   getState(): Promise<CpuState>;
   readMemory(addr: number, length: number): Promise<number[]>;
   reset(): Promise<void>;
+  /** Drain the latest completed PPU frame. Returns 160×144 shade indices (0-3)
+   *  or null if no new frame is ready. */
+  getFrame(): Promise<Uint8Array | null>;
 }
