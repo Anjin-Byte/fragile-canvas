@@ -1813,7 +1813,8 @@ mod tests {
         assert_eq!(t, 20, "interrupt dispatch should take 20 T-cycles");
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040);
         assert!(!cpu.ime);
-        assert_eq!(bus.read(0xFF0F), 0x00);
+        // bus.read(0xFF0F) includes | 0xE0 upper-bit mask on DMG
+        assert_eq!(bus.read(0xFF0F), 0xE0);
         let sp = cpu.register_file.get_16bit(Reg16::SP);
         let lo = bus.read(sp);
         let hi = bus.read(sp + 1);
@@ -1832,7 +1833,7 @@ mod tests {
 
         cpu.tick(&mut bus);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0050);
-        assert_eq!(bus.read(0xFF0F), 0x00);
+        assert_eq!(bus.read(0xFF0F), 0xE0);
     }
 
     #[test]
@@ -1847,7 +1848,7 @@ mod tests {
 
         cpu.tick(&mut bus);
         assert_eq!(cpu.register_file.get_16bit(Reg16::PC), 0x0040); // VBlank wins
-        assert_eq!(bus.read(0xFF0F), 0x04); // Timer still pending
+        assert_eq!(bus.read(0xFF0F), 0x04 | 0xE0); // Timer still pending
     }
 
     #[test]
@@ -1887,7 +1888,7 @@ mod tests {
         cpu.register_file.set_16bit(Reg16::SP, 0xFFFE);
 
         cpu.tick(&mut bus);
-        assert_eq!(bus.read(0xFF0F), 0x1E); // only bit 0 cleared
+        assert_eq!(bus.read(0xFF0F), 0x1E | 0xE0); // only bit 0 cleared
     }
 
     #[test]

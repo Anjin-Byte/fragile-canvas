@@ -80,6 +80,56 @@ impl Session {
         Ok(snapshot(gb))
     }
 
+    /// Execute exactly one instruction and return a detailed trace record.
+    ///
+    /// Captures the full CPU + I/O state before the instruction, the opcode
+    /// bytes, and the state after.  Designed for instruction-level debugging.
+    pub fn step_traced(&mut self) -> Result<InstrTrace, &'static str> {
+        let gb = self.gb.as_mut().ok_or("no ROM loaded")?;
+
+        // Capture state BEFORE the instruction
+        let pc_before = gb.cpu.register_file.get_16bit(Reg16::PC);
+        let snap_before = snapshot(gb);
+        let if_before = gb.bus.if_reg;
+        let ie_before = gb.bus.read(0xFFFF);
+        let ime_before = gb.cpu.ime;
+        let halted_before = gb.cpu.halted;
+
+        // Read up to 3 bytes at PC for disassembly context
+        let op0 = gb.bus.read(pc_before);
+        let op1 = gb.bus.read(pc_before.wrapping_add(1));
+        let op2 = gb.bus.read(pc_before.wrapping_add(2));
+
+        // Execute one instruction
+        let t_cycles = gb.tick();
+
+        // Capture state AFTER
+        let snap_after = snapshot(gb);
+        let if_after = gb.bus.if_reg;
+        let ime_after = gb.cpu.ime;
+        let halted_after = gb.cpu.halted;
+
+        Ok(InstrTrace {
+            pc: pc_before,
+            opcode: [op0, op1, op2],
+            t_cycles,
+            af_before: snap_before.af,
+            af_after: snap_after.af,
+            bc: snap_after.bc,
+            de: snap_after.de,
+            hl: snap_after.hl,
+            sp: snap_after.sp,
+            pc_after: snap_after.pc,
+            if_before,
+            if_after,
+            ie: ie_before,
+            ime_before,
+            ime_after,
+            halted_before,
+            halted_after,
+        })
+    }
+
     /// Governed tick: convert wall-clock elapsed nanoseconds into the
     /// correct number of T-cycles and execute them.
     pub fn tick_frame(&mut self, elapsed_ns: u64) -> Result<CpuSnapshot, &'static str> {
@@ -171,8 +221,18 @@ impl Session {
         bus.load_cartridge(cart_rom);
         // Unmap the boot ROM (write bit 0 to 0xFF50)
         bus.write(0xFF50, 0x01);
+
+        // DMG/MGB post-boot I/O register state (from Pandocs Power Up Sequence)
+        bus.if_reg = 0x01;              // IF  = VBlank (upper bits read as 1 via bus mask)
+        bus.write(0xFF00, 0xCF);        // P1  (joypad)
+        bus.write(0xFF02, 0x7E);        // SC  (serial control)
+        bus.write(0xFF07, 0xF8);        // TAC (timer control — disabled, upper bits set)
+        bus.write(0xFF40, 0x91);        // LCDC (LCD on, BG on, window off, OBJ off)
+        bus.write(0xFF41, 0x85);        // STAT
+        bus.write(0xFF47, 0xFC);        // BGP (background palette)
+
         let mut gb = GameBoy::new(bus, Tracer::off());
-        // DMG post-boot register state (verified against hardware)
+        // DMG post-boot CPU register state (verified against hardware)
         gb.cpu.register_file.set_8bit(Reg8::A, 0x01);
         gb.cpu.register_file.set_8bit(Reg8::F, 0xB0);
         gb.cpu.register_file.set_8bit(Reg8::B, 0x00);
@@ -187,6 +247,28 @@ impl Session {
         self.gb = Some(gb);
         self.gov = ClockGovernor::new();
         snap
+    }
+
+    /// Start logging all bus accesses to `addr` (reads/writes/internal sets).
+    pub fn watch_bus(&mut self, addr: u16) {
+        if let Some(gb) = self.gb.as_mut() {
+            gb.bus.watch(addr);
+        }
+    }
+
+    /// Stop bus watch logging.
+    pub fn unwatch_bus(&mut self) {
+        if let Some(gb) = self.gb.as_mut() {
+            gb.bus.unwatch();
+        }
+    }
+
+    /// Drain accumulated bus access log entries.
+    pub fn drain_bus_log(&mut self) -> Vec<crate::memory::bus::BusAccessLog> {
+        match self.gb.as_mut() {
+            Some(gb) => gb.bus.drain_access_log(),
+            None => Vec::new(),
+        }
     }
 
     /// Snapshot all relevant I/O register state in one call.
@@ -208,6 +290,78 @@ impl Session {
             joyp: gb.bus.read(0xFF00),
             ime: gb.cpu.ime,
         })
+    }
+}
+
+/// Trace record for a single instruction execution.
+#[derive(Debug, Clone)]
+pub struct InstrTrace {
+    /// PC at instruction start.
+    pub pc: u16,
+    /// Up to 3 opcode bytes at PC (for disassembly context).
+    pub opcode: [u8; 3],
+    /// T-cycles consumed by this instruction.
+    pub t_cycles: u8,
+    /// AF before and after.
+    pub af_before: u16,
+    pub af_after: u16,
+    /// Registers after execution.
+    pub bc: u16,
+    pub de: u16,
+    pub hl: u16,
+    pub sp: u16,
+    /// PC after execution (next instruction).
+    pub pc_after: u16,
+    /// IF register before and after.
+    pub if_before: u8,
+    pub if_after: u8,
+    /// IE register.
+    pub ie: u8,
+    /// IME before and after.
+    pub ime_before: bool,
+    pub ime_after: bool,
+    /// Halted state before and after.
+    pub halted_before: bool,
+    pub halted_after: bool,
+}
+
+impl std::fmt::Display for InstrTrace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Format: [PC] OP OP OP  Tcyc  AF→AF  BC   DE   HL   SP   IF→IF IE IME  flags
+        let halt_marker = if self.halted_after && !self.halted_before {
+            " →HALT"
+        } else if self.halted_before && !self.halted_after {
+            " WAKE←"
+        } else if self.halted_before {
+            " (halt)"
+        } else {
+            ""
+        };
+
+        let ime_change = if self.ime_before != self.ime_after {
+            format!(" IME:{}→{}", self.ime_before as u8, self.ime_after as u8)
+        } else {
+            format!(" IME:{}", self.ime_before as u8)
+        };
+
+        let if_change = if self.if_before != self.if_after {
+            format!("IF:{:02X}→{:02X}", self.if_before, self.if_after)
+        } else {
+            format!("IF:{:02X}", self.if_before)
+        };
+
+        write!(
+            f,
+            "[{:04X}] {:02X} {:02X} {:02X}  {:>2}T  AF:{:04X}→{:04X} BC:{:04X} DE:{:04X} HL:{:04X} SP:{:04X}  {} IE:{:02X}{}{}",
+            self.pc,
+            self.opcode[0], self.opcode[1], self.opcode[2],
+            self.t_cycles,
+            self.af_before, self.af_after,
+            self.bc, self.de, self.hl, self.sp,
+            if_change, self.ie,
+            ime_change,
+            halt_marker,
+        )
     }
 }
 

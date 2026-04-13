@@ -63,6 +63,7 @@ impl GameBoy {
             if self.bus.timer.interrupt_pending {
                 self.bus.timer.interrupt_pending = false;
                 self.bus.if_reg |= 1 << 2; // Timer interrupt: IF bit 2
+                self.bus.log_if_write(self.bus.if_reg, "timer");
             }
 
             // Serial port ticks every T-cycle (internal clock only).
@@ -70,6 +71,7 @@ impl GameBoy {
             if self.bus.serial.interrupt_pending {
                 self.bus.serial.interrupt_pending = false;
                 self.bus.if_reg |= 1 << 3; // Serial interrupt: IF bit 3
+                self.bus.log_if_write(self.bus.if_reg, "serial");
             }
 
             // APU frame sequencer (clocked by DIV-APU falling edge).

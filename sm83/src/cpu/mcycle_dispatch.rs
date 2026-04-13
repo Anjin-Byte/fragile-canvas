@@ -353,6 +353,7 @@ impl CPU {
         let bit = pending.trailing_zeros() as u8;
 
         bus.if_reg &= !(1 << bit);
+        bus.log_if_write(bus.if_reg, "irq_dispatch");
         self.ime = false;
         self.in_interrupt_dispatch = true;
         self.interrupt_vector = 0x0040 + (bit as u16) * 0x08;

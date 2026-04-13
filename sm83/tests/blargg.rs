@@ -15,7 +15,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use sm83::session::{CpuSnapshot, Session};
+use sm83::session::{CpuSnapshot, InstrTrace, Session};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -595,6 +595,7 @@ fn report_all() {
 //   cargo test -p sm83 --test blargg debug_halt_bug -- --ignored --nocapture
 
 const PC_RING_SIZE: usize = 16;
+const TRACE_RING_SIZE: usize = 64;
 
 #[derive(Debug)]
 enum StopReason {
@@ -609,6 +610,9 @@ struct DebugRunner {
     pc_ring: [u16; PC_RING_SIZE],
     ring_idx: usize,
     steps_executed: u64,
+    /// Ring buffer of the last N instruction traces.
+    trace_ring: Vec<InstrTrace>,
+    trace_idx: usize,
 }
 
 impl DebugRunner {
@@ -625,6 +629,8 @@ impl DebugRunner {
             pc_ring: [0; PC_RING_SIZE],
             ring_idx: 0,
             steps_executed: 0,
+            trace_ring: Vec::with_capacity(TRACE_RING_SIZE),
+            trace_idx: 0,
         }
     }
 
@@ -722,6 +728,72 @@ impl DebugRunner {
             format!("  Serial {serial_display}"),
         )
     }
+
+    /// Run one instruction at a time, capturing a trace ring buffer.
+    /// Stops when `stop` returns true, serial has a result, or budget
+    /// (in instructions) is exhausted.
+    fn run_traced(
+        &mut self,
+        budget_instrs: u64,
+        stop: impl Fn(&InstrTrace) -> bool,
+    ) -> StopReason {
+        for _ in 0..budget_instrs {
+            let trace = self.session.step_traced().unwrap();
+            self.steps_executed += 1;
+
+            // Record in PC ring
+            self.pc_ring[self.ring_idx % PC_RING_SIZE] = trace.pc;
+            self.ring_idx += 1;
+
+            // Record in trace ring (circular)
+            if self.trace_ring.len() < TRACE_RING_SIZE {
+                self.trace_ring.push(trace.clone());
+            } else {
+                self.trace_ring[self.trace_idx % TRACE_RING_SIZE] = trace.clone();
+            }
+            self.trace_idx += 1;
+
+            if stop(&trace) {
+                return StopReason::Condition;
+            }
+
+            let output = self.session.serial_output_as_string();
+            if output.contains("Passed") {
+                return StopReason::SerialPassed;
+            }
+            if output.contains("Failed") {
+                return StopReason::SerialFailed(output);
+            }
+        }
+        StopReason::BudgetExhausted
+    }
+
+    /// Print the last N instruction traces from the ring buffer.
+    /// If `last_n` is None, prints all entries.
+    fn dump_trace(&self, last_n: Option<usize>) {
+        let len = self.trace_ring.len();
+        let total = self.trace_idx.min(len);
+        let show = last_n.unwrap_or(total).min(total);
+
+        // Determine the starting index in the ring
+        let start_logical = if self.trace_idx > len {
+            self.trace_idx - len
+        } else {
+            0
+        };
+        let first = if self.trace_idx > show {
+            self.trace_idx - show
+        } else {
+            0
+        };
+
+        println!("\n══ Instruction Trace (last {} of {}) ══", show, self.trace_idx);
+        for i in first..self.trace_idx {
+            let entry = &self.trace_ring[i % len];
+            println!("  {entry}");
+        }
+        println!("══════════════════════════════════════════════════");
+    }
 }
 
 // ── Debug test stubs ────────────────────────────────────────────────────
@@ -733,27 +805,50 @@ impl DebugRunner {
 #[ignore]
 fn debug_halt_bug() {
     let mut r = DebugRunner::new("halt_bug.gb", true);
-    // Step instruction-by-instruction and watch for the spin loop
-    let reason = r.run_until(5_000_000, 1, |s, snap| {
-        // Stop as soon as we detect a 1-PC loop (same PC twice)
-        snap.pc == 0xC818
-    });
-    println!("Stop reason: {:?}", reason);
-    println!("{}", r.dump_state());
 
-    // Check cartridge RAM at 0xA000 for test result
-    let ram = r.session.read_memory(0xA000, 64).unwrap();
-    println!("Cart RAM 0xA000: result_code={:#04X}", ram[0]);
-    // Blargg v2 shell: 0xA001-0xA003 = signature "DE" "B0" "61"
-    // 0xA004+ = result text string
+    // Watch IF to see timer interrupt firing
+    r.session.watch_bus(0xFF0F);
+
+    // Trace instruction-by-instruction, stop when test is done
+    let reason = r.run_traced(500_000, |t| t.pc == 0xC818);
+    println!("Stop reason: {:?}", reason);
+
+    // Show IF log — filter to only timer-related entries
+    let log = r.session.drain_bus_log();
+    println!("\n══ IF Access Log — timer entries ({} total) ══", log.len());
+    for (i, entry) in log.iter().enumerate() {
+        if entry.source == "timer" || (entry.source == "cpu" && entry.value & 0x04 != 0) {
+            println!(
+                "  [{:>4}] {:10?} IF={:02X} pc={:04X} src={}",
+                i, entry.kind, entry.value, entry.pc, entry.source
+            );
+        }
+    }
+
+    // Also check: what are TAC/TIMA/TMA at the point of failure?
+    let io = r.session.io_snapshot().unwrap();
+    println!("\nI/O at stop: TAC={:02X} TIMA={:02X} TMA={:02X} DIV={:02X}",
+        io.tac, io.tima, io.tma, io.div);
+
+    // Show trace around the first HALT that gets F1 instead of E1
+    // Look for IF changing to include bit 4 (timer)
+    let len = r.trace_ring.len();
+    let first = if r.trace_idx > len { r.trace_idx - len } else { 0 };
+    println!("\n══ Trace entries where IF has bit 4 set ══");
+    let mut count = 0;
+    for i in first..r.trace_idx {
+        let t = &r.trace_ring[i % len];
+        if (t.if_after & 0x14 != 0) && !t.halted_before && count < 20 {
+            println!("  {t}");
+            count += 1;
+        }
+    }
+
+    let ram = r.session.read_memory(0xA000, 128).unwrap();
     if ram[1] == 0xDE && ram[2] == 0xB0 && ram[3] == 0x61 {
-        let text_end = ram[4..].iter().position(|&b| b == 0).unwrap_or(60);
+        let text_end = ram[4..].iter().position(|&b| b == 0).unwrap_or(124);
         let text = String::from_utf8_lossy(&ram[4..4 + text_end]);
-        println!("Result text: {:?}", text);
-    } else {
-        println!("No v2 result signature found at 0xA001");
-        let hex: Vec<String> = ram[..32].iter().map(|b| format!("{:02X}", b)).collect();
-        println!("Raw: {}", hex.join(" "));
+        println!("\nCart RAM result (code={:#04X}):\n{}", ram[0], text);
     }
 }
 

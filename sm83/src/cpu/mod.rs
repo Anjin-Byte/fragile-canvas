@@ -212,10 +212,16 @@ impl CPU {
 
         // ── M-cycle 0: fetch next opcode ──
         if self.mcycle == 0 {
-            // Check for pending interrupts before fetch.
-            // Note: EI defer is NOT consumed here — the instruction after EI
-            // must execute fully with IME=0.  The defer is consumed when that
-            // instruction completes (see InstructionComplete handling below).
+            // Consume EI defer from the PREVIOUS instruction.
+            // EI sets ime_defer; the defer is consumed here at the start of
+            // the NEXT instruction's fetch, so the instruction immediately
+            // after EI executes with IME=0 and the one after that sees IME=1.
+            if self.ime_defer {
+                self.ime_defer = false;
+                self.ime = true;
+            }
+
+            // Check for pending interrupts before fetch
             if self.ime {
                 let ie = bus.read(0xFFFF);
                 let pending = ie & bus.if_reg & 0x1F;
@@ -227,8 +233,11 @@ impl CPU {
 
             // Fetch opcode
             let pc = self.register_file.get_16bit(Reg16::PC);
+            bus.debug_pc = pc; // tag bus log entries with this instruction's PC
             let opcode = bus.read(pc);
-            // HALT bug: suppress the PC increment for one fetch
+            // HALT bug: PC fails to increment on this fetch, causing the
+            // byte after HALT to be read as both the opcode AND the first
+            // operand byte, corrupting multi-byte instructions.
             if self.halt_bug_active {
                 self.halt_bug_active = false;
             } else {
@@ -247,13 +256,6 @@ impl CPU {
             // 1-M instructions complete immediately during fetch
             if self.is_single_mcycle(opcode) {
                 self.execute_m1(opcode, bus);
-                // Consume EI defer after the instruction completes.
-                // This ensures EI → HALT sees IME=0 during HALT, and
-                // IME becomes 1 only at the start of the NEXT instruction.
-                if self.ime_defer {
-                    self.ime_defer = false;
-                    self.ime = true;
-                }
                 return pipeline::MCycleResult::InstructionComplete {
                     opcode: opcode as u16,
                 };
@@ -268,11 +270,6 @@ impl CPU {
         let result = self.execute_mcycle(bus);
         if matches!(result, pipeline::MCycleResult::InstructionComplete { .. }) {
             self.mcycle = 0;
-            // Consume EI defer after instruction completes.
-            if self.ime_defer {
-                self.ime_defer = false;
-                self.ime = true;
-            }
         } else {
             self.mcycle += 1;
         }

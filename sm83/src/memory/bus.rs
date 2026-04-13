@@ -8,6 +8,26 @@ use crate::timer::{self, Timer};
 const BOOT_ROM_SIZE: usize = 0x100;
 const BOOT_ROM_UNMAP: u16 = 0xFF50;
 
+/// A logged bus access for debugging.
+#[derive(Debug, Clone)]
+pub struct BusAccessLog {
+    pub kind: BusAccessKind,
+    pub addr: u16,
+    pub value: u8,
+    /// Source of the access: "cpu", "ppu", "timer", "serial", "irq_dispatch"
+    pub source: &'static str,
+    /// CPU PC at the time of the access (0 for subsystem/internal sources).
+    pub pc: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusAccessKind {
+    Read,
+    Write,
+    /// Direct field write (subsystem setting IF bits, not a bus transaction)
+    InternalSet,
+}
+
 #[derive(Clone)]
 pub struct Bus {
     boot_rom: [u8; BOOT_ROM_SIZE],
@@ -28,6 +48,15 @@ pub struct Bus {
     pub apu: Apu,
     pub ppu: Ppu,
     pub dma: DmaController,
+
+    // ── Debug tap ───────────────────────────────────────────────────
+    /// When set, log all accesses to this address.
+    watch_addr: Option<u16>,
+    /// Accumulated log entries.
+    pub access_log: Vec<BusAccessLog>,
+    /// Current CPU PC, updated by the CPU before each instruction.
+    /// Used to tag bus access log entries with the originating instruction.
+    pub debug_pc: u16,
 }
 
 impl Bus {
@@ -48,6 +77,9 @@ impl Bus {
             apu: Apu::new(),
             ppu: Ppu::new(),
             dma: DmaController::new(),
+            watch_addr: None,
+            access_log: Vec::new(),
+            debug_pc: 0,
         }
     }
 
@@ -67,6 +99,50 @@ impl Bus {
     pub fn load_cartridge(&mut self, data: &[u8]) {
         self.cart = Cartridge::new(data);
     }
+
+    // ── Debug tap ────────────────────────────────────────────────────
+
+    /// Start logging all accesses to `addr`.  Call `drain_access_log()`
+    /// to retrieve and clear the log.
+    pub fn watch(&mut self, addr: u16) {
+        self.watch_addr = Some(addr);
+        self.access_log.clear();
+    }
+
+    /// Stop watching.
+    pub fn unwatch(&mut self) {
+        self.watch_addr = None;
+    }
+
+    /// Drain accumulated log entries.
+    pub fn drain_access_log(&mut self) -> Vec<BusAccessLog> {
+        std::mem::take(&mut self.access_log)
+    }
+
+    /// Record a watched access (inlined check for zero cost when off).
+    #[inline]
+    fn log_access(&mut self, kind: BusAccessKind, addr: u16, value: u8, source: &'static str, pc: u16) {
+        if self.watch_addr == Some(addr) {
+            self.access_log.push(BusAccessLog { kind, addr, value, source, pc });
+        }
+    }
+
+    /// Record a direct field modification to IF (for subsystem taps).
+    /// Call this AFTER modifying `self.if_reg` directly.
+    #[inline]
+    pub fn log_if_write(&mut self, value: u8, source: &'static str) {
+        if self.watch_addr == Some(0xFF0F) {
+            self.access_log.push(BusAccessLog {
+                kind: BusAccessKind::InternalSet,
+                addr: 0xFF0F,
+                value,
+                source,
+                pc: 0,
+            });
+        }
+    }
+
+    // ── Address helpers ─────────────────────────────────────────────
 
     /// Returns true if the address belongs to the timer (FF04-FF07).
     fn is_timer_addr(addr: u16) -> bool {
@@ -115,7 +191,8 @@ impl Bus {
                 }
                 self.oam[addr as usize - 0xFE00]
             }
-            0xFF0F => self.if_reg,
+            // IF: upper 3 bits (5-7) always read as 1 on DMG.
+            0xFF0F => self.if_reg | 0xE0,
             0xFF46 => self.dma.source_page,
             0xFF00..=0xFF7F if Self::is_serial_addr(addr) => self.serial.read(addr),
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.read(addr),
@@ -148,7 +225,12 @@ impl Bus {
                 }
                 self.oam[addr as usize - 0xFE00] = value;
             }
-            0xFF0F => self.if_reg = value,
+            0xFF0F => {
+                // Only bits 0-4 are writable; upper bits are unused.
+                self.if_reg = value & 0x1F;
+                let pc = self.debug_pc;
+                self.log_access(BusAccessKind::Write, 0xFF0F, value & 0x1F, "cpu", pc);
+            }
             0xFF46 => self.dma.trigger(value),
             0xFF00..=0xFF7F if Self::is_serial_addr(addr) => self.serial.write(addr, value),
             0xFF00..=0xFF7F if Self::is_timer_addr(addr) => self.timer.write(addr, value),
@@ -180,10 +262,12 @@ impl Bus {
         if self.ppu.vblank_irq {
             self.ppu.vblank_irq = false;
             self.if_reg |= 0x01;
+            self.log_if_write(self.if_reg, "ppu_vblank");
         }
         if self.ppu.stat_irq {
             self.ppu.stat_irq = false;
             self.if_reg |= 0x02;
+            self.log_if_write(self.if_reg, "ppu_stat");
         }
 
         // Mode 2 start: compute Mode 3 end dot from sprite count + scroll + window.
@@ -520,8 +604,13 @@ mod tests {
     fn if_reg_direct_and_bus_access_agree() {
         let mut bus = Bus::new();
         bus.if_reg = 0x03;
-        assert_eq!(bus.read(0xFF0F), 0x03);
+        // Read returns if_reg | 0xE0 (upper bits always 1 on DMG)
+        assert_eq!(bus.read(0xFF0F), 0x03 | 0xE0);
+        // Write masks to lower 5 bits
         bus.write(0xFF0F, 0x1F);
+        assert_eq!(bus.if_reg, 0x1F);
+        // Writing upper bits has no effect
+        bus.write(0xFF0F, 0xFF);
         assert_eq!(bus.if_reg, 0x1F);
     }
 }
