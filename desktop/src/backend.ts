@@ -20,6 +20,14 @@ export const tauriBackend: EmulatorBackend = {
     });
   },
 
+  async loadRomNoBoot(cartRom: Uint8Array): Promise<CpuState> {
+    await audio.init();
+    await audio.resume();
+    return invoke<CpuState>("load_rom_no_boot", {
+      cartRom: Array.from(cartRom),
+    });
+  },
+
   async loadDefaultRom(): Promise<CpuState> {
     await audio.init();
     await audio.resume();
@@ -36,6 +44,10 @@ export const tauriBackend: EmulatorBackend = {
     const state = await invoke<CpuState>("tick_frame", { elapsedNs: Number(elapsedNs) });
     await drainAndPushAudio();
     return state;
+  },
+
+  async setButtons(action: number, direction: number): Promise<void> {
+    await invoke("set_buttons", { action, direction });
   },
 
   async resetGovernor(): Promise<void> {

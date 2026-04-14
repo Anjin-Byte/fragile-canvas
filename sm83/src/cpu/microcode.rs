@@ -2141,13 +2141,13 @@ mod tests {
     }
 
     #[test]
-    fn high_page_offset_zero() {
-        // 0xFF00 + 0x00 = 0xFF00
+    fn high_page_offset_generic_io() {
+        // 0xFF00 + 0x03 = 0xFF03 (generic I/O register, not joypad)
         let (mut cpu, mut bus) = make_cpu();
-        cpu.register_file.set_8bit(Reg8::C, 0x00);
+        cpu.register_file.set_8bit(Reg8::C, 0x03);
         cpu.register_file.set_8bit(Reg8::A, 0xDD);
         execute(&mut cpu, &mut bus, MicroOp::WriteHighPage { offset: Reg8::C, src: Reg8::A });
-        assert_eq!(bus.read(0xFF00), 0xDD);
+        assert_eq!(bus.read(0xFF03), 0xDD);
     }
 
     #[test]

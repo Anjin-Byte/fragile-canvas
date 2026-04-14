@@ -1,4 +1,5 @@
 use crate::apu::Apu;
+use crate::joypad::Joypad;
 use crate::memory::cartridge::Cartridge;
 use crate::memory::dma::DmaController;
 use crate::ppu::Ppu;
@@ -43,6 +44,7 @@ pub struct Bus {
     /// hardware subsystems (timer, PPU) can set bits via internal wiring
     /// without going through the CPU bus — matching real SoC behaviour.
     pub if_reg: u8,
+    pub joypad: Joypad,
     pub timer: Timer,
     pub serial: Serial,
     pub apu: Apu,
@@ -72,6 +74,7 @@ impl Bus {
             hram: [0; 0x7F],
             interrupt_enable_register: 0,
             if_reg: 0,
+            joypad: Joypad::new(),
             timer: Timer::new(),
             serial: Serial::new(),
             apu: Apu::new(),
@@ -191,6 +194,7 @@ impl Bus {
                 }
                 self.oam[addr as usize - 0xFE00]
             }
+            0xFF00 => self.joypad.read(),
             // IF: upper 3 bits (5-7) always read as 1 on DMG.
             0xFF0F => self.if_reg | 0xE0,
             0xFF46 => self.dma.source_page,
@@ -225,6 +229,7 @@ impl Bus {
                 }
                 self.oam[addr as usize - 0xFE00] = value;
             }
+            0xFF00 => self.joypad.write(value),
             0xFF0F => {
                 // Only bits 0-4 are writable; upper bits are unused.
                 self.if_reg = value & 0x1F;

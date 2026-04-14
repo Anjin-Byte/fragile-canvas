@@ -61,7 +61,7 @@ impl WaveChannel {
     }
 
     /// Write a register by index.
-    pub fn write(&mut self, reg_index: u8, value: u8) {
+    pub fn write(&mut self, reg_index: u8, value: u8, frame_step: u8) {
         match reg_index {
             0 => {
                 self.dac_enable = value;
@@ -77,9 +77,19 @@ impl WaveChannel {
             3 => self.period_low = value,
             4 => {
                 self.period_high_ctrl = value;
-                self.length.enabled = value & 0x40 != 0;
-                if value & 0x80 != 0 {
-                    self.trigger();
+                let was_enabled = self.length.enabled;
+                let now_enabled = value & 0x40 != 0;
+                self.length.enabled = now_enabled;
+
+                let trigger = value & 0x80 != 0;
+                if !was_enabled && now_enabled && frame_step & 1 == 1 && !trigger {
+                    if self.length.tick() {
+                        self.enabled = false;
+                    }
+                }
+
+                if trigger {
+                    self.trigger(frame_step);
                 }
             }
             _ => {}
@@ -102,11 +112,18 @@ impl WaveChannel {
     }
 
     /// Handle trigger event.
-    fn trigger(&mut self) {
+    fn trigger(&mut self, frame_step: u8) {
         if self.dac_enabled() {
             self.enabled = true;
         }
         self.length.trigger();
+
+        if self.length.enabled && frame_step & 1 == 1 {
+            if self.length.tick() {
+                self.enabled = false;
+            }
+        }
+
         self.period_timer = (2048 - self.period()) * 2;
         self.wave_position = 0;
     }
@@ -193,16 +210,16 @@ mod tests {
     #[test]
     fn dac_enable_readable() {
         let mut ch = WaveChannel::new();
-        ch.write(0, 0x80);
+        ch.write(0, 0x80, 0);
         assert_eq!(ch.read(0), 0xFF); // 0x80 | 0x7F
-        ch.write(0, 0x00);
+        ch.write(0, 0x00, 0);
         assert_eq!(ch.read(0), 0x7F); // 0x00 | 0x7F
     }
 
     #[test]
     fn length_write_only() {
         let mut ch = WaveChannel::new();
-        ch.write(1, 0x42);
+        ch.write(1, 0x42, 0);
         assert_eq!(ch.read(1), 0xFF);
         assert_eq!(ch.length_reg, 0x42);
     }
@@ -210,35 +227,35 @@ mod tests {
     #[test]
     fn output_level_readable() {
         let mut ch = WaveChannel::new();
-        ch.write(2, 0x60);
+        ch.write(2, 0x60, 0);
         assert_eq!(ch.read(2), 0xFF); // 0x60 | 0x9F
-        ch.write(2, 0x20);
+        ch.write(2, 0x20, 0);
         assert_eq!(ch.read(2), 0xBF); // 0x20 | 0x9F
     }
 
     #[test]
     fn trigger_enables_when_dac_on() {
         let mut ch = WaveChannel::new();
-        ch.write(0, 0x80); // DAC on
-        ch.write(4, 0x80); // trigger
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(4, 0x80, 0); // trigger
         assert!(ch.enabled);
     }
 
     #[test]
     fn trigger_does_not_enable_when_dac_off() {
         let mut ch = WaveChannel::new();
-        ch.write(0, 0x00); // DAC off
-        ch.write(4, 0x80); // trigger
+        ch.write(0, 0x00, 0); // DAC off
+        ch.write(4, 0x80, 0); // trigger
         assert!(!ch.enabled);
     }
 
     #[test]
     fn dac_off_disables_channel() {
         let mut ch = WaveChannel::new();
-        ch.write(0, 0x80); // DAC on
-        ch.write(4, 0x80); // trigger
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(4, 0x80, 0); // trigger
         assert!(ch.enabled);
-        ch.write(0, 0x00); // DAC off
+        ch.write(0, 0x00, 0); // DAC off
         assert!(!ch.enabled);
     }
 
@@ -268,8 +285,8 @@ mod tests {
     #[test]
     fn period_combines_low_and_high() {
         let mut ch = WaveChannel::new();
-        ch.write(3, 0xFF);
-        ch.write(4, 0x07);
+        ch.write(3, 0xFF, 0);
+        ch.write(4, 0x07, 0);
         assert_eq!(ch.period(), 0x7FF);
     }
 
@@ -277,8 +294,8 @@ mod tests {
     fn trigger_resets_wave_position() {
         let mut ch = WaveChannel::new();
         ch.wave_position = 15;
-        ch.write(0, 0x80); // DAC on
-        ch.write(4, 0x80); // trigger
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(4, 0x80, 0); // trigger
         assert_eq!(ch.wave_position, 0);
     }
 
@@ -287,9 +304,9 @@ mod tests {
         let mut ch = WaveChannel::new();
         // Wave RAM byte 0 = 0xAB → sample 0 = 0xA, sample 1 = 0xB
         ch.write_wave_ram(0, 0xAB);
-        ch.write(0, 0x80); // DAC on
-        ch.write(2, 0x20); // output level = 01 (100%, no shift)
-        ch.write(4, 0x80); // trigger → position = 0
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(2, 0x20, 0); // output level = 01 (100%, no shift)
+        ch.write(4, 0x80, 0); // trigger → position = 0
 
         // Position 0: high nibble of byte 0 = 0xA
         // Need to advance once since trigger sets position to 0

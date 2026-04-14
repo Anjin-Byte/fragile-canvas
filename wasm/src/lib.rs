@@ -57,9 +57,24 @@ impl EmulatorWasm {
         to_js(self.session.load_rom(cart_rom))
     }
 
+    /// Load a ROM skipping the boot ROM (starts at PC=0x0100 with
+    /// correct post-boot DMG register and I/O state).
+    #[wasm_bindgen(js_name = loadRomNoBoot)]
+    pub fn load_rom_no_boot(&mut self, cart_rom: &[u8]) -> Result<JsValue, JsValue> {
+        to_js(self.session.load_rom_no_boot(cart_rom))
+    }
+
     #[wasm_bindgen(js_name = loadDefaultRom)]
     pub fn load_default_rom(&mut self) -> Result<JsValue, JsValue> {
         to_js(self.session.load_default_rom())
+    }
+
+    /// Set joypad button state.
+    /// `action`: A=1, B=2, Select=4, Start=8.
+    /// `direction`: Right=1, Left=2, Up=4, Down=8.
+    #[wasm_bindgen(js_name = setButtons)]
+    pub fn set_buttons(&mut self, action: u8, direction: u8) {
+        self.session.set_buttons(action, direction);
     }
 
     pub fn step(&mut self, ticks: u32) -> Result<JsValue, JsValue> {

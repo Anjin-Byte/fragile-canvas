@@ -13,6 +13,7 @@
 ///   cargo test -p sm83 --test blargg              # cpu_instrs only
 ///   cargo test -p sm83 --test blargg -- --ignored  # everything else
 use std::collections::BTreeSet;
+use std::io::Write as IoWrite;
 use std::path::PathBuf;
 
 use sm83::session::{CpuSnapshot, InstrTrace, Session};
@@ -53,18 +54,34 @@ struct RomEntry {
     path: &'static str,
 }
 
-/// Run every ROM in a suite, print a results table, and return the
-/// pass/total counts.  Does NOT panic — the caller decides whether
-/// to assert.
-fn run_suite(suite_name: &str, roms: &[RomEntry]) -> (usize, usize) {
-    const W: usize = 52; // inner width between the ║ chars
+/// Structured result for a single ROM test.
+struct TestResult {
+    name: String,
+    status: &'static str, // "PASS", "FAIL", "TIME"
+    /// Full diagnostic output (serial or cart RAM).
+    detail: String,
+}
+
+/// Structured results for a suite.
+struct SuiteReport {
+    name: String,
+    results: Vec<TestResult>,
+    passed: usize,
+    total: usize,
+}
+
+/// Run a suite and return structured results (also prints to terminal).
+fn run_suite_report(suite_name: &str, roms: &[RomEntry]) -> SuiteReport {
+    const W: usize = 52;
 
     println!();
     println!("╔{:═<W$}╗", "");
     println!("║  {:<w$}║", suite_name, w = W - 2);
     println!("╠{:═<W$}╣", "");
 
+    let mut results = Vec::new();
     let mut passed = 0;
+
     for rom in roms {
         let result = run_blargg_test(rom.path);
         let tag = result.tag();
@@ -74,25 +91,43 @@ fn run_suite(suite_name: &str, roms: &[RomEntry]) -> (usize, usize) {
 
         let detail = match &result {
             BlarggResult::Passed => String::new(),
-            BlarggResult::Failed(out) => {
-                // First non-blank line after the ROM name echo.
-                out.lines()
-                    .filter(|l| !l.is_empty())
-                    .nth(1)
-                    .map(|s| format!("  {s}"))
-                    .unwrap_or_default()
-            }
+            BlarggResult::Failed(out) => out.clone(),
             BlarggResult::Timeout(out) => {
                 if out.is_empty() {
-                    "  (no serial output)".into()
+                    "(no output)".to_string()
                 } else {
-                    "  (timed out)".into()
+                    out.clone()
                 }
             }
         };
 
-        let line = format!("  [{tag}]  {}{detail}", rom.name);
+        // Terminal output
+        let line = format!("  [{tag}]  {}", rom.name);
         println!("║{line:<W$}║");
+        match &result {
+            BlarggResult::Passed => {}
+            BlarggResult::Failed(out) => {
+                for dl in out.lines().filter(|l| !l.is_empty()).skip(1) {
+                    let dl = format!("         {dl}");
+                    println!("║{dl:<W$}║");
+                }
+            }
+            BlarggResult::Timeout(out) => {
+                let msg = if out.is_empty() {
+                    "(no serial output)".to_string()
+                } else {
+                    out.lines().filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" | ")
+                };
+                let dl = format!("         {msg}");
+                println!("║{dl:<W$}║");
+            }
+        }
+
+        results.push(TestResult {
+            name: rom.name.to_string(),
+            status: tag,
+            detail,
+        });
     }
 
     let summary = format!("  Result: {}/{} passed", passed, roms.len());
@@ -101,7 +136,116 @@ fn run_suite(suite_name: &str, roms: &[RomEntry]) -> (usize, usize) {
     println!("╚{:═<W$}╝", "");
     println!();
 
-    (passed, roms.len())
+    SuiteReport {
+        name: suite_name.to_string(),
+        results,
+        passed,
+        total: roms.len(),
+    }
+}
+
+/// Write a markdown report file from structured suite results.
+fn write_markdown_report(suites: &[SuiteReport]) {
+    let report_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("assets")
+        .join("docs");
+    let report_path = report_dir.join("blargg_test_results.md");
+
+    let mut total_pass = 0;
+    let mut total_count = 0;
+    for s in suites {
+        total_pass += s.passed;
+        total_count += s.total;
+    }
+
+    let mut f = std::fs::File::create(&report_path)
+        .unwrap_or_else(|e| panic!("cannot create {}: {}", report_path.display(), e));
+
+    writeln!(f, "# Blargg Test Results").unwrap();
+    writeln!(f).unwrap();
+    writeln!(f, "**{total_pass}/{total_count} passing**").unwrap();
+    writeln!(f).unwrap();
+
+    // Summary table
+    writeln!(f, "## Summary").unwrap();
+    writeln!(f).unwrap();
+    writeln!(f, "| Suite | Result |").unwrap();
+    writeln!(f, "|-------|--------|").unwrap();
+    for s in suites {
+        let icon = if s.passed == s.total { "pass" } else if s.passed > 0 { "partial" } else { "fail" };
+        writeln!(f, "| {} | {}/{} ({icon}) |", s.name, s.passed, s.total).unwrap();
+    }
+    writeln!(f).unwrap();
+
+    // Detailed results per suite
+    for s in suites {
+        writeln!(f, "## {}", s.name).unwrap();
+        writeln!(f).unwrap();
+        writeln!(f, "| Test | Status | Detail |").unwrap();
+        writeln!(f, "|------|--------|--------|").unwrap();
+
+        for r in &s.results {
+            let status_icon = match r.status {
+                "PASS" => "PASS",
+                "FAIL" => "FAIL",
+                "TIME" => "TIMEOUT",
+                _ => r.status,
+            };
+
+            // Extract the failure message: skip the ROM name echo, take
+            // the first meaningful line as a short summary.
+            let short_detail = if r.detail.is_empty() {
+                String::new()
+            } else {
+                let lines: Vec<&str> = r.detail.lines()
+                    .filter(|l| !l.is_empty())
+                    .collect();
+                // Skip first line (ROM name) if there are more lines
+                if lines.len() > 1 {
+                    lines[1..].iter()
+                        .take(2)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                } else if !lines.is_empty() {
+                    lines[0].to_string()
+                } else {
+                    String::new()
+                }
+            };
+
+            writeln!(f, "| {} | {} | {} |", r.name, status_icon, short_detail).unwrap();
+        }
+        writeln!(f).unwrap();
+
+        // For failing tests with longer output, add a details section
+        let failures: Vec<&TestResult> = s.results.iter()
+            .filter(|r| r.status != "PASS" && !r.detail.is_empty() && r.detail != "(no output)")
+            .collect();
+
+        if !failures.is_empty() {
+            writeln!(f, "<details>").unwrap();
+            writeln!(f, "<summary>Failure details</summary>").unwrap();
+            writeln!(f).unwrap();
+
+            for r in failures {
+                writeln!(f, "### {}", r.name).unwrap();
+                writeln!(f).unwrap();
+                writeln!(f, "```").unwrap();
+                for line in r.detail.lines() {
+                    writeln!(f, "{line}").unwrap();
+                }
+                writeln!(f, "```").unwrap();
+                writeln!(f).unwrap();
+            }
+
+            writeln!(f, "</details>").unwrap();
+            writeln!(f).unwrap();
+        }
+    }
+
+    println!("Report written to {}", report_path.display());
 }
 
 fn load_rom_data(rom_relative_path: &str) -> Vec<u8> {
@@ -110,8 +254,23 @@ fn load_rom_data(rom_relative_path: &str) -> Vec<u8> {
         .unwrap_or_else(|e| panic!("cannot read ROM {}: {}", rom_path.display(), e))
 }
 
+/// Check cart RAM at 0xA000 for v2 test shell results.
+/// Returns Some(text) if the v2 signature (DE B0 61) is found.
+fn check_cart_ram(session: &Session) -> Option<(u8, String)> {
+    let ram = session.read_memory(0xA000, 128).ok()?;
+    if ram.len() >= 4 && ram[1] == 0xDE && ram[2] == 0xB0 && ram[3] == 0x61 {
+        let code = ram[0];
+        let text_end = ram[4..].iter().position(|&b| b == 0).unwrap_or(124);
+        let text = String::from_utf8_lossy(&ram[4..4 + text_end]).into_owned();
+        Some((code, text))
+    } else {
+        None
+    }
+}
+
 /// Load a ROM from `rom_relative_path` (relative to the test-ROM root),
 /// run it for up to ~30 s of emulated time, and return the outcome.
+/// Checks both serial output (v1 shell) and cart RAM (v2 shell).
 /// Skips the boot ROM for faster execution.
 fn run_blargg_test(rom_relative_path: &str) -> BlarggResult {
     let rom_data = load_rom_data(rom_relative_path);
@@ -130,6 +289,7 @@ fn run_blargg_test(rom_relative_path: &str) -> BlarggResult {
         session.step(CHUNK).unwrap();
         executed += CHUNK as u64;
 
+        // Check serial output (v1 shell)
         let output = session.serial_output_as_string();
         if output.contains("Passed") {
             return BlarggResult::Passed;
@@ -137,9 +297,34 @@ fn run_blargg_test(rom_relative_path: &str) -> BlarggResult {
         if output.contains("Failed") {
             return BlarggResult::Failed(output);
         }
+
+        // Check cart RAM (v2 shell) — only after enough execution time
+        // for the ROM to have actually run (skip first ~1M M-cycles)
+        if executed > 1_000_000 {
+            if let Some((code, text)) = check_cart_ram(&session) {
+                if !text.is_empty() {
+                    if code == 0x00 && text.contains("Passed") {
+                        return BlarggResult::Passed;
+                    }
+                    if text.contains("Failed") || code != 0x00 {
+                        return BlarggResult::Failed(text);
+                    }
+                }
+            }
+        }
     }
 
-    BlarggResult::Timeout(session.serial_output_as_string())
+    // On timeout, check both sources for partial output
+    let serial = session.serial_output_as_string();
+    if !serial.is_empty() {
+        return BlarggResult::Timeout(serial);
+    }
+    if let Some((_code, text)) = check_cart_ram(&session) {
+        if !text.is_empty() {
+            return BlarggResult::Timeout(text);
+        }
+    }
+    BlarggResult::Timeout(String::new())
 }
 
 fn assert_blargg_passes(rom_relative_path: &str) {
@@ -543,48 +728,54 @@ const OAM_BUG: &[RomEntry] = &[
 #[test]
 #[ignore]
 fn report_cpu_instrs() {
-    run_suite("cpu_instrs", CPU_INSTRS);
+    let r = run_suite_report("cpu_instrs", CPU_INSTRS);
+    write_markdown_report(&[r]);
 }
 
 #[test]
 #[ignore]
 fn report_timing() {
-    run_suite("timing", TIMING);
+    let r = run_suite_report("timing", TIMING);
+    write_markdown_report(&[r]);
 }
 
 #[test]
 #[ignore]
 fn report_dmg_sound() {
-    run_suite("dmg_sound", DMG_SOUND);
+    let r = run_suite_report("dmg_sound", DMG_SOUND);
+    write_markdown_report(&[r]);
 }
 
 #[test]
 #[ignore]
 fn report_oam_bug() {
-    run_suite("oam_bug", OAM_BUG);
+    let r = run_suite_report("oam_bug", OAM_BUG);
+    write_markdown_report(&[r]);
 }
 
 #[test]
 #[ignore]
 fn report_all() {
-    let suites: &[(&str, &[RomEntry])] = &[
+    let suites_def: &[(&str, &[RomEntry])] = &[
         ("cpu_instrs", CPU_INSTRS),
         ("timing",     TIMING),
         ("dmg_sound",  DMG_SOUND),
         ("oam_bug",    OAM_BUG),
     ];
 
-    let mut total_pass = 0;
-    let mut total_count = 0;
-    for (name, roms) in suites {
-        let (p, c) = run_suite(name, roms);
-        total_pass += p;
-        total_count += c;
-    }
+    let reports: Vec<SuiteReport> = suites_def
+        .iter()
+        .map(|(name, roms)| run_suite_report(name, roms))
+        .collect();
+
+    let total_pass: usize = reports.iter().map(|r| r.passed).sum();
+    let total_count: usize = reports.iter().map(|r| r.total).sum();
 
     println!("════════════════════════════════════════════════════");
     println!("  TOTAL: {total_pass}/{total_count} passed");
     println!("════════════════════════════════════════════════════");
+
+    write_markdown_report(&reports);
 }
 
 // ── Debug runner ────────────────────────────────────────────────────────
@@ -602,6 +793,7 @@ enum StopReason {
     Condition,
     BudgetExhausted,
     SerialPassed,
+    #[allow(dead_code)]
     SerialFailed(String),
 }
 
@@ -770,17 +962,12 @@ impl DebugRunner {
 
     /// Print the last N instruction traces from the ring buffer.
     /// If `last_n` is None, prints all entries.
+    #[allow(dead_code)]
     fn dump_trace(&self, last_n: Option<usize>) {
         let len = self.trace_ring.len();
         let total = self.trace_idx.min(len);
         let show = last_n.unwrap_or(total).min(total);
 
-        // Determine the starting index in the ring
-        let start_logical = if self.trace_idx > len {
-            self.trace_idx - len
-        } else {
-            0
-        };
         let first = if self.trace_idx > show {
             self.trace_idx - show
         } else {

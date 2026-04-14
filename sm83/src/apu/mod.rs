@@ -164,15 +164,16 @@ impl Apu {
             return;
         }
 
+        let fs = self.frame_step;
         match addr {
             // CH1: FF10-FF14
-            0xFF10..=0xFF14 => self.ch1.write((addr - 0xFF10) as u8, value),
+            0xFF10..=0xFF14 => self.ch1.write((addr - 0xFF10) as u8, value, fs),
             // CH2: FF16-FF19
-            0xFF16..=0xFF19 => self.ch2.write((addr - 0xFF15) as u8, value),
+            0xFF16..=0xFF19 => self.ch2.write((addr - 0xFF15) as u8, value, fs),
             // CH3: FF1A-FF1E
-            0xFF1A..=0xFF1E => self.ch3.write((addr - 0xFF1A) as u8, value),
+            0xFF1A..=0xFF1E => self.ch3.write((addr - 0xFF1A) as u8, value, fs),
             // CH4: FF20-FF23
-            0xFF20..=0xFF23 => self.ch4.write((addr - 0xFF20) as u8, value),
+            0xFF20..=0xFF23 => self.ch4.write((addr - 0xFF20) as u8, value, fs),
             // Master registers
             NR50 => self.nr50 = value,
             NR51 => self.nr51 = value,
@@ -362,6 +363,7 @@ mod tests {
     fn nr10_bit7_reads_as_one() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80); // power on
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR10, 0x00);
         assert_eq!(apu.read(NR10), 0x80);
     }
@@ -370,6 +372,7 @@ mod tests {
     fn nr11_length_bits_read_as_ones() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR11, 0xC0); // duty = 11, length = 0
         assert_eq!(apu.read(NR11), 0xFF); // 0xC0 | 0x3F
     }
@@ -378,6 +381,7 @@ mod tests {
     fn nr12_fully_readable() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR12, 0xA5);
         assert_eq!(apu.read(NR12), 0xA5);
     }
@@ -386,6 +390,7 @@ mod tests {
     fn nr13_fully_write_only() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR13, 0x42);
         assert_eq!(apu.read(NR13), 0xFF);
     }
@@ -394,6 +399,7 @@ mod tests {
     fn nr14_trigger_reads_zero_unused_bits_read_one() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR14, 0xFF);
         // Trigger (bit 7) reads 0, bits 5:3 read 1, bits 2:0 (period high) write-only → read with mask
         assert_eq!(apu.read(NR14), 0xFF); // 0xFF | 0xBF = 0xFF
@@ -405,6 +411,7 @@ mod tests {
     fn nr30_bits_6_to_0_read_as_ones() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR30, 0x80); // DAC enable only
         assert_eq!(apu.read(NR30), 0xFF); // 0x80 | 0x7F
         apu.write(NR30, 0x00);
@@ -415,6 +422,7 @@ mod tests {
     fn nr32_output_level_readable() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR32, 0x60); // output level = 11
         assert_eq!(apu.read(NR32), 0xFF); // 0x60 | 0x9F
         apu.write(NR32, 0x00);
@@ -425,6 +433,7 @@ mod tests {
     fn nr41_fully_write_only() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR41, 0x2A);
         assert_eq!(apu.read(NR41), 0xFF);
     }
@@ -433,6 +442,7 @@ mod tests {
     fn nr42_nr43_fully_readable() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR42, 0xF3);
         apu.write(NR43, 0x5A);
         assert_eq!(apu.read(NR42), 0xF3);
@@ -443,6 +453,7 @@ mod tests {
     fn nr44_trigger_reads_zero() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR44, 0xC0); // trigger + length enable
         assert_eq!(apu.read(NR44), 0xFF); // 0xC0 | 0xBF
     }
@@ -451,6 +462,7 @@ mod tests {
     fn nr50_nr51_fully_readable() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77);
         apu.write(NR51, 0xFF);
         assert_eq!(apu.read(NR50), 0x77);
@@ -461,6 +473,7 @@ mod tests {
     fn ch2_read_masks() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR21, 0x80); // duty = 10, length = 0
         assert_eq!(apu.read(NR21), 0xBF); // 0x80 | 0x3F
         apu.write(NR23, 0xAB);
@@ -473,6 +486,7 @@ mod tests {
     fn ch3_read_masks() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR31, 0x42);
         assert_eq!(apu.read(NR31), 0xFF); // write-only
         apu.write(NR33, 0x42);
@@ -489,6 +503,7 @@ mod tests {
         // Power off: bit 7 = 0, bits 6:4 = 1, bits 3:0 = 0
         assert_eq!(apu.read(NR52), 0x70);
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         // Power on: bit 7 = 1, bits 6:4 = 1, bits 3:0 = 0 (no channels active)
         assert_eq!(apu.read(NR52), 0xF0);
     }
@@ -507,6 +522,7 @@ mod tests {
     fn power_off_zeroes_registers() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80); // power on
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR10, 0x37);
         apu.write(NR12, 0xF3);
         apu.write(NR50, 0x77);
@@ -530,6 +546,7 @@ mod tests {
 
         // Power on and check — values should not have been stored
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         assert_eq!(apu.read(NR10), 0x80); // mask only, not 0x37 | 0x80
         assert_eq!(apu.read(NR12), 0x00); // not 0xF3
     }
@@ -538,6 +555,7 @@ mod tests {
     fn power_off_preserves_wave_ram() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         for i in 0..16u8 {
             apu.write(WAVE_RAM_START + i as u16, i * 0x11);
         }
@@ -560,6 +578,7 @@ mod tests {
     fn wave_ram_round_trip() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         for i in 0..16u8 {
             apu.write(WAVE_RAM_START + i as u16, 0xA0 + i);
         }
@@ -582,6 +601,7 @@ mod tests {
     fn unused_addresses_read_0xff() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         // FF15
         assert_eq!(apu.read(0xFF15), 0xFF);
         // FF1F
@@ -598,12 +618,14 @@ mod tests {
     fn power_cycle_resets_registers() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR12, 0xF3);
         assert_eq!(apu.read(NR12), 0xF3);
 
         // Power off then on
         apu.write(NR52, 0x00);
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Register should have been cleared
         assert_eq!(apu.read(NR12), 0x00);
@@ -613,6 +635,7 @@ mod tests {
     fn writes_work_after_power_on() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77);
         assert_eq!(apu.read(NR50), 0x77);
         apu.write(NR51, 0xAB);
@@ -625,6 +648,7 @@ mod tests {
     fn all_readable_registers_apply_correct_mask() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Write 0x00 to each register, read back should equal the mask
         let test_cases: &[(u16, u8)] = &[
@@ -649,6 +673,7 @@ mod tests {
     fn all_readable_registers_preserve_readable_bits() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Write 0xFF, read back should be 0xFF for all registers
         // (writable bits set + mask bits set = all 1s)
@@ -676,6 +701,7 @@ mod tests {
     fn nr52_status_reflects_channel_enabled() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // No channels enabled
         assert_eq!(apu.read(NR52) & 0x0F, 0x00);
@@ -708,6 +734,7 @@ mod tests {
     fn nr52_status_clears_when_dac_off() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Enable CH1
         apu.write(NR12, 0xF0);
@@ -725,6 +752,7 @@ mod tests {
     fn length_counter_disables_channel_via_tick() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // CH1: DAC on, short length, trigger with length enable
         apu.write(NR11, 0xC0 | 62); // duty=11, length=62 → counter=2
@@ -744,6 +772,7 @@ mod tests {
     fn trigger_reloads_length_when_zero() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // CH1: don't write length (counter stays 0), trigger
         apu.write(NR12, 0xF0);  // DAC on
@@ -756,6 +785,7 @@ mod tests {
     fn ch3_length_counter_uses_256_steps() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         apu.write(NR30, 0x80);  // DAC on
         apu.write(NR31, 0x00);  // length = 0 → counter = 256
@@ -839,6 +869,7 @@ mod tests {
     fn length_disabled_does_not_tick() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         apu.write(NR11, 0xC0 | 63); // length=63 → counter=1
         apu.write(NR12, 0xF0);
@@ -855,6 +886,7 @@ mod tests {
     fn power_off_disables_all_channels() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Enable all channels
         apu.write(NR12, 0xF0);
@@ -875,6 +907,7 @@ mod tests {
     fn power_off_resets_internal_state() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Set up CH1 with envelope, length, sweep
         apu.write(NR10, 0x37);
@@ -916,6 +949,7 @@ mod tests {
     fn ch1_sound_start_sequence() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Typical game sound init for CH1:
         // Sweep: period=2, shift=1, subtract
@@ -947,6 +981,7 @@ mod tests {
     fn ch4_noise_start_sequence() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Typical noise SFX:
         apu.write(NR41, 0x10);  // length = 16
@@ -964,6 +999,7 @@ mod tests {
     fn ch3_wave_start_sequence() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Load wave pattern
         for i in 0..16u8 {
@@ -995,6 +1031,7 @@ mod tests {
     fn silence_after_power_off() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR12, 0xF0);
         apu.write(NR14, 0x80);
         apu.write(NR50, 0x77);
@@ -1015,8 +1052,8 @@ mod tests {
     #[test]
     fn dac_output_range_pulse() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on, volume=15
-        ch.write(4, 0x80); // trigger
+        ch.write(2, 0xF0, 0); // DAC on, volume=15
+        ch.write(4, 0x80, 0); // trigger
 
         // duty_output=1, volume=15 → digital=15 → (15/7.5)-1 = +1.0
         ch.duty_step = 7; // step 7 is high for duty 0 (12.5%)
@@ -1040,6 +1077,7 @@ mod tests {
     fn nr51_panning_routes_correctly() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77); // max volume both sides
         apu.write(NR51, 0x10); // CH1 to left only (bit 4)
 
@@ -1057,6 +1095,7 @@ mod tests {
     fn nr51_panning_both_sides() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77); // max volume both sides
         apu.write(NR51, 0x11); // CH1 to both left and right
 
@@ -1071,6 +1110,7 @@ mod tests {
     fn nr50_volume_scales_output() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR51, 0x11); // CH1 to both
         apu.write(NR12, 0xF0);
         apu.write(NR14, 0x80);
@@ -1096,6 +1136,7 @@ mod tests {
     fn high_pass_filter_removes_dc() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77);
         apu.write(NR51, 0x11); // CH1 both sides
 
@@ -1122,9 +1163,9 @@ mod tests {
     #[test]
     fn lfsr_15bit_sequence_length() {
         let mut ch = NoiseChannel::new();
-        ch.write(2, 0x00); // shift=0, 15-bit, divisor=0
-        ch.write(1, 0xF0); // DAC on
-        ch.write(3, 0x80); // trigger → LFSR = 0x7FFF
+        ch.write(2, 0x00, 0); // shift=0, 15-bit, divisor=0
+        ch.write(1, 0xF0, 0); // DAC on
+        ch.write(3, 0x80, 0); // trigger → LFSR = 0x7FFF
 
         let initial = ch.lfsr;
         let mut count = 0u32;
@@ -1145,9 +1186,9 @@ mod tests {
     #[test]
     fn lfsr_7bit_sequence_length() {
         let mut ch = NoiseChannel::new();
-        ch.write(2, 0x08); // shift=0, 7-bit mode, divisor=0
-        ch.write(1, 0xF0); // DAC on
-        ch.write(3, 0x80); // trigger → LFSR = 0x7FFF
+        ch.write(2, 0x08, 0); // shift=0, 7-bit mode, divisor=0
+        ch.write(1, 0xF0, 0); // DAC on
+        ch.write(3, 0x80, 0); // trigger → LFSR = 0x7FFF
 
         // In 7-bit mode, the lower 7 bits form the effective LFSR.
         // After settling, the lower 7 bits should cycle with period 127.
@@ -1178,6 +1219,9 @@ mod tests {
     fn frame_sequencer_full_cycle_accuracy() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        // Use even frame_step during trigger to avoid extra length clock,
+        // then reset to 0 for the frame sequencer test.
+        apu.frame_step = 0;
 
         // CH1: length=62→counter=2, envelope vol=15 period=1, sweep period=1 shift=1
         apu.write(NR10, 0x11); // sweep period=1, shift=1, add
@@ -1187,6 +1231,7 @@ mod tests {
         apu.write(NR14, 0xC0); // trigger + length enable, period high = 0 → period = 0x80
 
         assert!(apu.ch1.enabled);
+        apu.frame_step = 0; // reset for frame sequencer testing
         let len_before = apu.ch1.length.counter;
         let vol_before = apu.ch1.envelope.volume;
         let sweep_shadow = apu.ch1.sweep.as_ref().unwrap().shadow_freq;
@@ -1245,9 +1290,9 @@ mod tests {
     #[test]
     fn pulse_period_timer_exact_tcycle_count() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on
-        ch.write(3, 0x00); // period low = 0
-        ch.write(4, 0x84); // trigger, period high = 4 → period = 0x400 = 1024
+        ch.write(2, 0xF0, 0); // DAC on
+        ch.write(3, 0x00, 0); // period low = 0
+        ch.write(4, 0x84, 0); // trigger, period high = 4 → period = 0x400 = 1024
 
         // Timer should be (2048 - 1024) * 4 = 4096
         let initial_step = ch.duty_step;
@@ -1269,9 +1314,9 @@ mod tests {
         let mut ch = WaveChannel::new();
         ch.write_wave_ram(0, 0xAB);
         ch.write_wave_ram(1, 0xCD);
-        ch.write(0, 0x80); // DAC on
-        ch.write(3, 0x00); // period low = 0
-        ch.write(4, 0x84); // trigger, period high = 4 → period = 0x400
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(3, 0x00, 0); // period low = 0
+        ch.write(4, 0x84, 0); // trigger, period high = 4 → period = 0x400
 
         // Timer = (2048 - 1024) * 2 = 2048
         let initial_pos = ch.wave_position;
@@ -1297,10 +1342,10 @@ mod tests {
             let low = (i * 2 + 1) & 0x0F;
             ch.write_wave_ram(i, (high << 4) | low);
         }
-        ch.write(0, 0x80); // DAC on
-        ch.write(2, 0x20); // output level 100%
-        ch.write(3, 0xFF); // period low = 0xFF
-        ch.write(4, 0x87); // trigger, period high = 7 → period = 0x7FF
+        ch.write(0, 0x80, 0); // DAC on
+        ch.write(2, 0x20, 0); // output level 100%
+        ch.write(3, 0xFF, 0); // period low = 0xFF
+        ch.write(4, 0x87, 0); // trigger, period high = 7 → period = 0x7FF
 
         // Read all 32 samples by forcing timer expiry.
         // tick_period advances position THEN reads the sample at that position.
@@ -1337,9 +1382,9 @@ mod tests {
 
         for code in 0..8u8 {
             let mut ch = NoiseChannel::new();
-            ch.write(2, code); // shift=0, 15-bit, divisor=code
-            ch.write(1, 0xF0); // DAC on
-            ch.write(3, 0x80); // trigger
+            ch.write(2, code, 0); // shift=0, 15-bit, divisor=code
+            ch.write(1, 0xF0, 0); // DAC on
+            ch.write(3, 0x80, 0); // trigger
 
             assert_eq!(
                 ch.period_timer, expected[code as usize],
@@ -1354,14 +1399,14 @@ mod tests {
     fn noise_divisor_with_shift() {
         let mut ch = NoiseChannel::new();
         // code=1 (base=16), shift=3 → 16 << 3 = 128
-        ch.write(2, 0x31); // shift=3, 15-bit, divisor=1
-        ch.write(1, 0xF0);
-        ch.write(3, 0x80);
+        ch.write(2, 0x31, 0); // shift=3, 15-bit, divisor=1
+        ch.write(1, 0xF0, 0);
+        ch.write(3, 0x80, 0);
         assert_eq!(ch.period_timer, 128);
 
         // code=0 (base=8), shift=4 → 8 << 4 = 128
-        ch.write(2, 0x40); // shift=4, 15-bit, divisor=0
-        ch.write(3, 0x80);
+        ch.write(2, 0x40, 0); // shift=4, 15-bit, divisor=0
+        ch.write(3, 0x80, 0);
         assert_eq!(ch.period_timer, 128);
     }
 
@@ -1371,6 +1416,7 @@ mod tests {
     fn sweep_double_overflow_check() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // freq=0x400 (1024), sweep period=1, shift=1, add mode
         // First calc: 1024 + 512 = 1536 (ok, ≤ 2047)
@@ -1395,6 +1441,7 @@ mod tests {
     fn sweep_trigger_immediate_overflow() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // freq=0x700, shift=1 → 0x700 + 0x380 = 0xA80 > 2047
         apu.write(NR10, 0x11); // period=1, shift=1, add
@@ -1410,6 +1457,7 @@ mod tests {
     fn sweep_negate_then_add_disables_channel() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Start with negate mode
         apu.write(NR10, 0x19); // period=1, negate, shift=1
@@ -1432,8 +1480,8 @@ mod tests {
     #[test]
     fn envelope_period_zero_timer_still_cycles() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // vol=15, down, period=0
-        ch.write(4, 0x80); // trigger
+        ch.write(2, 0xF0, 0); // vol=15, down, period=0
+        ch.write(4, 0x80, 0); // trigger
 
         // Timer should be loaded as 8 (period 0 treated as 8)
         // Tick 100 times — volume should never change
@@ -1447,8 +1495,8 @@ mod tests {
     #[test]
     fn dac_output_linearity() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on, vol=15
-        ch.write(4, 0x80); // trigger
+        ch.write(2, 0xF0, 0); // DAC on, vol=15
+        ch.write(4, 0x80, 0); // trigger
         ch.duty_step = 7; // high output
 
         // Test all 16 envelope volumes
@@ -1468,8 +1516,8 @@ mod tests {
     #[test]
     fn dac_output_zero_when_duty_low() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on, vol=15
-        ch.write(4, 0x80); // trigger
+        ch.write(2, 0xF0, 0); // DAC on, vol=15
+        ch.write(4, 0x80, 0); // trigger
         ch.duty_step = 0; // low output for all duty patterns
 
         for vol in 0..=15u8 {
@@ -1487,6 +1535,7 @@ mod tests {
     fn power_cycle_produces_silence() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Start all 4 channels with max volume
         apu.write(NR50, 0x77);
@@ -1507,6 +1556,7 @@ mod tests {
         // Power cycle
         apu.write(NR52, 0x00);
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Mix should be silent (no channels enabled, NR50/NR51 zeroed)
         let (l, r) = apu.mix_raw();
@@ -1522,6 +1572,7 @@ mod tests {
     fn all_four_channels_mix_independently() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
         apu.write(NR50, 0x77); // max volume
 
         // Enable CH1 only, route to left
@@ -1566,6 +1617,7 @@ mod tests {
     fn trigger_reloads_zero_length_all_channels() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // CH1: 64-step
         apu.write(NR12, 0xF0);
@@ -1593,6 +1645,7 @@ mod tests {
     fn wave_state_resets_but_ram_preserved() {
         let mut apu = Apu::new();
         apu.write(NR52, 0x80);
+        apu.frame_step = 0; // even step → no extra length clock on trigger
 
         // Load a known pattern and start the channel
         for i in 0..16u8 {
@@ -1740,7 +1793,6 @@ mod tests {
     #[test]
     #[ignore]
     fn trace_boot_ly_loop() {
-        use std::fs::File;
         use crate::memory::bus::Bus;
         use crate::system::GameBoy;
         use crate::trace::Tracer;

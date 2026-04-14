@@ -53,9 +53,21 @@ fn load_rom(emu: State<Emulator>, cart_rom: Vec<u8>) -> Result<CpuState, String>
 }
 
 #[tauri::command]
+fn load_rom_no_boot(emu: State<Emulator>, cart_rom: Vec<u8>) -> Result<CpuState, String> {
+    let mut session = emu.0.lock().unwrap();
+    ok(session.load_rom_no_boot(&cart_rom))
+}
+
+#[tauri::command]
 fn load_default_rom(emu: State<Emulator>) -> Result<CpuState, String> {
     let mut session = emu.0.lock().unwrap();
     ok(session.load_default_rom())
+}
+
+#[tauri::command]
+fn set_buttons(emu: State<Emulator>, action: u8, direction: u8) {
+    let mut session = emu.0.lock().unwrap();
+    session.set_buttons(action, direction);
 }
 
 #[tauri::command]
@@ -138,7 +150,9 @@ fn main() {
         .manage(Emulator(Mutex::new(Session::new())))
         .invoke_handler(tauri::generate_handler![
             load_rom,
+            load_rom_no_boot,
             load_default_rom,
+            set_buttons,
             step,
             tick_frame,
             reset_governor,

@@ -8,7 +8,7 @@ pub mod registers;
 
 use crate::memory::bus::Bus;
 use crate::trace::Tracer;
-use registers::{Reg8, Reg16, RegisterFile};
+use registers::{Reg16, RegisterFile};
 
 /// Interrupt dispatch takes 5 M-cycles = 20 T-cycles on the SM83.
 const INTERRUPT_T_CYCLES: u8 = 20;

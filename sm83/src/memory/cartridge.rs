@@ -608,7 +608,6 @@ mod tests {
 
     #[test]
     fn mbc1_upper_window_uses_bank_hi() {
-        let mut cart = mbc1_cart();
         // bank_hi=1, rom_bank_lo=1 → bank = (1<<5)|1 = 33 → wraps to 33 % 32 = 1
         // Use a cart with more banks to avoid wrapping.
         // rom_sz=0x06 = 128 banks = 2 MiB

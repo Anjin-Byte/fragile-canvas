@@ -80,7 +80,7 @@ impl PulseChannel {
     }
 
     /// Write a register by index.
-    pub fn write(&mut self, reg_index: u8, value: u8) {
+    pub fn write(&mut self, reg_index: u8, value: u8, frame_step: u8) {
         match reg_index {
             0 => {
                 if self.has_sweep {
@@ -107,9 +107,23 @@ impl PulseChannel {
             3 => self.period_low = value,
             4 => {
                 self.period_high_ctrl = value;
-                self.length.enabled = value & 0x40 != 0;
-                if value & 0x80 != 0 {
-                    self.trigger();
+                let was_enabled = self.length.enabled;
+                let now_enabled = value & 0x40 != 0;
+                self.length.enabled = now_enabled;
+
+                // Extra length clock on enable transition (without trigger):
+                // If length enable goes 0→1 on an even frame step (next step
+                // won't clock length), and trigger is NOT also set, tick length.
+                // When trigger IS set, trigger() handles the extra clock itself.
+                let trigger = value & 0x80 != 0;
+                if !was_enabled && now_enabled && frame_step & 1 == 1 && !trigger {
+                    if self.length.tick() {
+                        self.enabled = false;
+                    }
+                }
+
+                if trigger {
+                    self.trigger(frame_step);
                 }
             }
             _ => {}
@@ -117,11 +131,21 @@ impl PulseChannel {
     }
 
     /// Handle trigger event (NRx4 bit 7 written).
-    fn trigger(&mut self) {
+    fn trigger(&mut self, frame_step: u8) {
         if self.dac_enabled {
             self.enabled = true;
         }
         self.length.trigger();
+
+        // Extra length clock on trigger: if length is enabled and we're
+        // on an odd frame sequencer step, the freshly-(re)loaded length
+        // counter gets an immediate tick.
+        if self.length.enabled && frame_step & 1 == 1 {
+            if self.length.tick() {
+                self.enabled = false;
+            }
+        }
+
         self.envelope.trigger(self.envelope_reg);
 
         self.period_timer = (2048 - self.period()) * 4;
@@ -229,7 +253,7 @@ mod tests {
     #[test]
     fn ch1_sweep_reg_readable() {
         let mut ch = PulseChannel::new(true);
-        ch.write(0, 0x37);
+        ch.write(0, 0x37, 0);
         assert_eq!(ch.read(0), 0x37 | 0x80);
     }
 
@@ -242,30 +266,30 @@ mod tests {
     #[test]
     fn ch2_sweep_write_ignored() {
         let mut ch = PulseChannel::new(false);
-        ch.write(0, 0x37);
+        ch.write(0, 0x37, 0);
         assert_eq!(ch.sweep_reg, 0); // not stored
     }
 
     #[test]
     fn duty_readable_length_write_only() {
         let mut ch = PulseChannel::new(true);
-        ch.write(1, 0xC0); // duty = 11, length = 0
+        ch.write(1, 0xC0, 0); // duty = 11, length = 0
         assert_eq!(ch.read(1), 0xFF); // 0xC0 | 0x3F
-        ch.write(1, 0x80); // duty = 10
+        ch.write(1, 0x80, 0); // duty = 10
         assert_eq!(ch.read(1), 0xBF); // 0x80 | 0x3F
     }
 
     #[test]
     fn envelope_fully_readable() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xA5);
+        ch.write(2, 0xA5, 0);
         assert_eq!(ch.read(2), 0xA5);
     }
 
     #[test]
     fn period_low_write_only() {
         let mut ch = PulseChannel::new(true);
-        ch.write(3, 0x42);
+        ch.write(3, 0x42, 0);
         assert_eq!(ch.read(3), 0xFF);
         assert_eq!(ch.period_low, 0x42); // internally stored
     }
@@ -273,35 +297,35 @@ mod tests {
     #[test]
     fn period_high_trigger_write_only() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on
-        ch.write(4, 0xC3); // trigger + length enable + period high = 3
+        ch.write(2, 0xF0, 0); // DAC on
+        ch.write(4, 0xC3, 0); // trigger + length enable + period high = 3
         assert_eq!(ch.read(4), 0xC3 | 0xBF); // 0xFF
     }
 
     #[test]
     fn trigger_enables_channel_when_dac_on() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on (bits 7:4 = 0xF)
+        ch.write(2, 0xF0, 0); // DAC on (bits 7:4 = 0xF)
         assert!(!ch.enabled);
-        ch.write(4, 0x80); // trigger
+        ch.write(4, 0x80, 0); // trigger
         assert!(ch.enabled);
     }
 
     #[test]
     fn trigger_does_not_enable_when_dac_off() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0x00); // DAC off
-        ch.write(4, 0x80); // trigger
+        ch.write(2, 0x00, 0); // DAC off
+        ch.write(4, 0x80, 0); // trigger
         assert!(!ch.enabled);
     }
 
     #[test]
     fn dac_off_disables_channel() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on
-        ch.write(4, 0x80); // trigger → enabled
+        ch.write(2, 0xF0, 0); // DAC on
+        ch.write(4, 0x80, 0); // trigger → enabled
         assert!(ch.enabled);
-        ch.write(2, 0x00); // DAC off → disabled
+        ch.write(2, 0x00, 0); // DAC off → disabled
         assert!(!ch.enabled);
         assert!(!ch.dac_enabled);
     }
@@ -309,26 +333,26 @@ mod tests {
     #[test]
     fn dac_enabled_when_upper_bits_nonzero() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0x08); // only direction bit set → bits 7:3 = 0b00001
+        ch.write(2, 0x08, 0); // only direction bit set → bits 7:3 = 0b00001
         assert!(ch.dac_enabled);
-        ch.write(2, 0x07); // only period bits → bits 7:3 = 0
+        ch.write(2, 0x07, 0); // only period bits → bits 7:3 = 0
         assert!(!ch.dac_enabled);
     }
 
     #[test]
     fn period_combines_low_and_high() {
         let mut ch = PulseChannel::new(true);
-        ch.write(3, 0xAB); // low
-        ch.write(4, 0x05); // high bits 2:0 = 5
+        ch.write(3, 0xAB, 0); // low
+        ch.write(4, 0x05, 0); // high bits 2:0 = 5
         assert_eq!(ch.period(), 0x5AB);
     }
 
     #[test]
     fn power_off_resets_all_state() {
         let mut ch = PulseChannel::new(true);
-        ch.write(0, 0x37);
-        ch.write(2, 0xF0);
-        ch.write(4, 0x80); // trigger
+        ch.write(0, 0x37, 0);
+        ch.write(2, 0xF0, 0);
+        ch.write(4, 0x80, 0); // trigger
         assert!(ch.enabled);
 
         ch.power_off();
@@ -342,7 +366,7 @@ mod tests {
     fn duty_patterns_correct() {
         let mut ch = PulseChannel::new(true);
         // Duty 0 (12.5%): only steps 6,7 are high
-        ch.write(1, 0x00); // duty = 00
+        ch.write(1, 0x00, 0); // duty = 00
         let expected_0 = [0, 0, 0, 0, 0, 0, 0, 1];
         for i in 0..8 {
             ch.duty_step = i;
@@ -350,7 +374,7 @@ mod tests {
         }
 
         // Duty 1 (25%): steps 6,7 are high
-        ch.write(1, 0x40); // duty = 01
+        ch.write(1, 0x40, 0); // duty = 01
         let expected_1 = [0, 0, 0, 0, 0, 0, 1, 1];
         for i in 0..8 {
             ch.duty_step = i;
@@ -358,7 +382,7 @@ mod tests {
         }
 
         // Duty 2 (50%): steps 4-7 are high
-        ch.write(1, 0x80); // duty = 10
+        ch.write(1, 0x80, 0); // duty = 10
         let expected_2 = [0, 0, 0, 0, 1, 1, 1, 1];
         for i in 0..8 {
             ch.duty_step = i;
@@ -366,7 +390,7 @@ mod tests {
         }
 
         // Duty 3 (75%): steps 0-5 are high
-        ch.write(1, 0xC0); // duty = 11
+        ch.write(1, 0xC0, 0); // duty = 11
         let expected_3 = [1, 1, 1, 1, 1, 1, 0, 0];
         for i in 0..8 {
             ch.duty_step = i;
@@ -377,9 +401,9 @@ mod tests {
     #[test]
     fn trigger_does_not_reset_duty_step() {
         let mut ch = PulseChannel::new(true);
-        ch.write(2, 0xF0); // DAC on
+        ch.write(2, 0xF0, 0); // DAC on
         ch.duty_step = 5;
-        ch.write(4, 0x80); // trigger
+        ch.write(4, 0x80, 0); // trigger
         assert_eq!(ch.duty_step, 5); // duty step preserved
     }
 }

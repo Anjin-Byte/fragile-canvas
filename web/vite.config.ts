@@ -1,17 +1,10 @@
-import path from 'path'
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
 import wasm from 'vite-plugin-wasm'
 
 export default defineConfig({
-  plugins: [react(), wasm()],
+  plugins: [svelte(), wasm()],
   base: process.env.GITHUB_ACTIONS ? '/fragile-canvas/' : '/',
-  resolve: {
-    alias: {
-      react: path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-    },
-  },
   server: {
     fs: {
       allow: [
@@ -20,5 +13,13 @@ export default defineConfig({
         '../ui',
       ],
     },
+  },
+  // Treat the linked ui package as source (not pre-bundled)
+  // so the Svelte plugin processes .svelte files from ../ui/src
+  optimizeDeps: {
+    exclude: ['@fragile-canvas/ui'],
+  },
+  ssr: {
+    noExternal: ['@fragile-canvas/ui'],
   },
 })

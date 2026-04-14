@@ -32,6 +32,14 @@ export const wasmBackend: EmulatorBackend = {
     return emu.loadRom(cartRom) as CpuState;
   },
 
+  async loadRomNoBoot(cartRom: Uint8Array): Promise<CpuState> {
+    await ensureInit();
+    emu = new EmulatorWasm();
+    await audio.init();
+    await audio.resume();
+    return emu.loadRomNoBoot(cartRom) as CpuState;
+  },
+
   async loadDefaultRom(): Promise<CpuState> {
     await ensureInit();
     emu = new EmulatorWasm();
@@ -52,6 +60,10 @@ export const wasmBackend: EmulatorBackend = {
     const state = emu.tickFrame(elapsedNs) as CpuState;
     drainAndPushAudio();
     return state;
+  },
+
+  async setButtons(action: number, direction: number): Promise<void> {
+    if (emu) emu.setButtons(action, direction);
   },
 
   async resetGovernor(): Promise<void> {

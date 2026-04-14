@@ -1,16 +1,15 @@
-import path from 'path'
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [svelte()],
   server: {
     open: false,
   },
-  resolve: {
-    alias: {
-      react: path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-    },
+  optimizeDeps: {
+    exclude: ['@fragile-canvas/ui'],
+  },
+  ssr: {
+    noExternal: ['@fragile-canvas/ui'],
   },
 })

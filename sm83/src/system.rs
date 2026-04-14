@@ -74,6 +74,12 @@ impl GameBoy {
                 self.bus.log_if_write(self.bus.if_reg, "serial");
             }
 
+            // Joypad interrupt (button press transition).
+            if self.bus.joypad.interrupt_pending {
+                self.bus.joypad.interrupt_pending = false;
+                self.bus.if_reg |= 1 << 4; // Joypad interrupt: IF bit 4
+            }
+
             // APU frame sequencer (clocked by DIV-APU falling edge).
             let div_fell = self.bus.timer.div_apu_fell();
             self.bus.apu.tick(div_fell);

@@ -154,6 +154,19 @@ impl Session {
         Ok((addr..end).map(|a| gb.bus.read(a)).collect())
     }
 
+    /// Set joypad button state from the frontend.
+    ///
+    /// `action`: bitmask of pressed action buttons (A=1, B=2, Select=4, Start=8).
+    /// `direction`: bitmask of pressed direction buttons (Right=1, Left=2, Up=4, Down=8).
+    ///
+    /// Call this whenever keyboard/controller state changes. The emulator
+    /// reads the state when the game polls 0xFF00.
+    pub fn set_buttons(&mut self, action: u8, direction: u8) {
+        if let Some(gb) = self.gb.as_mut() {
+            gb.bus.joypad.set_state(action, direction);
+        }
+    }
+
     /// Reset the governor accumulator (call after pause/resume).
     pub fn reset_governor(&mut self) {
         self.gov.reset();
