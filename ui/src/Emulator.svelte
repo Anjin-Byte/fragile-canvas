@@ -20,8 +20,8 @@
   // ── Non-reactive refs ──
   let runningRef = false;
   let rafRef = 0;
-  let screen: Screen;
-  let fileInput: HTMLInputElement;
+  let screen = $state<Screen>();
+  let fileInput = $state<HTMLInputElement>();
   let fpsFrames = 0;
   let fpsLast = 0;
 
@@ -159,17 +159,31 @@
   }
 
   // ── Drag and drop ──
-  function onDragOver(e: DragEvent) {
+  // Counter tracks nested dragenter/dragleave pairs so the overlay
+  // stays visible when the cursor moves over child elements.
+  let dragCounter = 0;
+
+  function onDragEnter(e: DragEvent) {
     e.preventDefault();
+    dragCounter++;
     dragging = true;
   }
 
+  function onDragOver(e: DragEvent) {
+    e.preventDefault();
+  }
+
   function onDragLeave() {
-    dragging = false;
+    dragCounter--;
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      dragging = false;
+    }
   }
 
   async function onDrop(e: DragEvent) {
     e.preventDefault();
+    dragCounter = 0;
     dragging = false;
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
@@ -199,6 +213,7 @@
 </script>
 
 <svelte:window
+  ondragenter={onDragEnter}
   ondragover={onDragOver}
   ondragleave={onDragLeave}
   ondrop={onDrop}
@@ -208,35 +223,38 @@
   {#if !loaded}
     <!-- ── Hero state ── -->
     <div class="hero">
-      <div class="hero-card" role="button" tabindex="0" onclick={onCardClick} onkeydown={(e) => e.key === 'Enter' && onCardClick()}>
-        <div class="hero-screen-ghost"></div>
-        <h1 class="hero-title">fragile-canvas</h1>
-        <p class="hero-prompt"><Upload size={14} /> Drop a ROM anywhere, or click to browse</p>
-        <input
-          bind:this={fileInput}
-          type="file"
-          accept=".gb,.gbc,.bin"
-          class="hidden-input"
-          onchange={onFileSelect}
-        />
+      <h1 class="hero-title">fragile-canvas</h1>
+
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept=".gb,.gbc,.bin"
+        class="hidden-input"
+        onchange={onFileSelect}
+      />
+
+      <div class="hero-actions">
+        <button class="hero-btn hero-btn-primary" onclick={onCardClick}>
+          <Upload size={16} /> Load a ROM file
+        </button>
+        <span class="hero-divider">or</span>
+        <button class="hero-btn hero-btn-secondary" onclick={loadDefault}>
+          <Gamepad2 size={16} /> Play Tobu Tobu Girl
+        </button>
       </div>
-      <div class="hero-divider">or</div>
-      <button class="ctrl-btn demo-btn" onclick={loadDefault}>
-        <Gamepad2 size={14} /> Play Tobu Tobu Girl
-      </button>
+
+      <p class="hero-hint">or drop a .gb file anywhere</p>
+      <p class="hero-credit">Tobu Tobu Girl © Tangram Games · CC BY 4.0</p>
     </div>
   {:else}
     <!-- ── Playing state ── -->
     <div class="stage">
       <div class="screen-bezel">
-        <div class="bezel-label-strip">
-          <span class="bezel-spec-text">DOT MATRIX WITH STEREO SOUND</span>
-        </div>
-        <div class="bezel-brand">
-          <span class="bezel-brand-text">fragile-canvas</span>
+        <div class="bezel-top">
+        <div class="power-led" class:led-on={running}></div>
+          <span class="bezel-brand-text">DOT MATRIX WITH STEREO SOUND</span>
         </div>
         <div class="bezel-screen-area">
-          <div class="power-led" class:led-on={running}></div>
           <div class="screen-well">
             <Screen bind:this={screen} />
           </div>
@@ -308,46 +326,31 @@
   .hero {
     flex: 1;
     display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .hero-card {
-    position: relative;
-    display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    padding: 56px 64px;
-    background: linear-gradient(
-      180deg,
-      oklch(0.25 0.008 250) 0%,
-      oklch(0.21 0.008 250) 100%
+    justify-content: center;
+    gap: 32px;
+    position: relative;
+  }
+
+  /* Ambient glow — dimmer than playing state (Game Boy is off) */
+  .hero::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 700px;
+    height: 650px;
+    transform: translate(-50%, -55%);
+    z-index: -1;
+    border-radius: 50%;
+    background: radial-gradient(
+      ellipse at center,
+      oklch(0.76 0.06 115 / 3%) 0%,
+      oklch(0.76 0.03 115 / 1%) 45%,
+      transparent 70%
     );
-    border: 1px solid var(--stroke-lo);
-    border-top-color: oklch(1 0 0 / 5%);
-    border-radius: var(--radius-lg);
-    cursor: pointer;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    overflow: hidden;
-  }
-
-  .hero-card:hover {
-    border-color: var(--stroke-mid);
-    border-top-color: oklch(1 0 0 / 8%);
-  }
-
-  .hero-card:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--interactive-ring);
-  }
-
-  .hero-screen-ghost {
-    width: 160px;
-    height: 144px;
-    border-radius: var(--radius-sm);
-    background: oklch(0.06 0.008 115);  /* barely-visible DMG green tint */
-    margin-bottom: 8px;
+    pointer-events: none;
   }
 
   .hero-title {
@@ -358,13 +361,102 @@
     letter-spacing: 0.02em;
   }
 
-  .hero-prompt {
+  /* ── Hero actions ── */
+  .hero-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .hero-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--text-subtle);
-    font-weight: 400;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 24px;
+    min-height: 40px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+                box-shadow 0.15s ease, transform 0.1s ease;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  .hero-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--interactive-ring);
+  }
+
+  .hero-btn:active {
+    transform: scale(0.98);
+  }
+
+  /* Primary — green accent, the main CTA */
+  .hero-btn-primary {
+    color: oklch(0.18 0.01 115);
+    background: var(--accent-oklch);
+    border: 1px solid oklch(0.82 0.20 115);
+  }
+
+  .hero-btn-primary:hover {
+    background: var(--interactive-hi);
+    box-shadow: 0 0 12px oklch(0.76 0.18 115 / 20%);
+  }
+
+  /* Secondary — surface-level, understated */
+  .hero-btn-secondary {
+    color: var(--text-mid);
+    background: var(--surface-3);
+    border: 1px solid var(--stroke-mid);
+  }
+
+  .hero-btn-secondary:hover {
+    color: var(--text-hi);
+    background: var(--surface-4);
+    border-color: var(--stroke-hi);
+  }
+
+  /* ── Divider ── */
+  .hero-divider {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.05em;
+    position: relative;
+    padding: 0 16px;
+  }
+
+  .hero-divider::before,
+  .hero-divider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 40px;
+    height: 1px;
+    background: var(--stroke-lo);
+  }
+
+  .hero-divider::before { right: 100%; }
+  .hero-divider::after  { left: 100%; }
+
+  /* ── Hint text ── */
+  .hero-hint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.02em;
+  }
+
+  .hero-credit {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.02em;
   }
 
   .hidden-input {
@@ -373,13 +465,6 @@
     width: 0;
     height: 0;
     pointer-events: none;
-  }
-
-  .hero-divider {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    text-transform: lowercase;
   }
 
   /* ── Playing state ── */
@@ -393,17 +478,10 @@
     position: relative;
   }
 
-  /* ── DMG-inspired bezel ──
-     Proportions from the Game Boy DMG-01 hardware, scaled to 35%.
-     Ratios: label/screen = 0.23, sides/screen = 0.11, chamfer/width = 0.07.
-     The chamfer is on the bezel body bottom-right corner. */
   .screen-bezel {
     position: relative;
     flex-shrink: 0;
-    /* DMG shape: subtle radius on top corners and bottom-left,
-       larger curved chamfer on bottom-right (matches the real hardware's
-       softened diagonal cut). */
-    border-radius: 15px 15px 70px 15px;
+    border-radius: 15px;
     background: linear-gradient(
       180deg,
       oklch(0.24 0.007 250) 0%,
@@ -415,40 +493,11 @@
       0 6px 24px oklch(0 0 0 / 25%);
   }
 
-  /* ── Top label strip — darker recessed band (DMG logo area) ──
-     Height ratio: 0.23 × screen_h at 80% scale = 82px */
-  .bezel-label-strip {
-    height: 35px;
+  .bezel-top {
     display: flex;
     align-items: center;
-    justify-content: center;
-    background: linear-gradient(
-      180deg,
-      oklch(0.17 0.008 250) 0%,
-      oklch(0.19 0.008 250) 100%
-    );
-    box-shadow:
-      inset 0 1px 2px oklch(0 0 0 / 20%),
-      0 1px 0 0 oklch(1 0 0 / 3%);
-    border-bottom: 1px solid oklch(0 0 0 / 12%);
-    border-radius: 10px 10px 0 0;
-  }
-
-  /* "DOT MATRIX WITH STEREO SOUND" — in the dark strip */
-  .bezel-spec-text {
-    font-family: var(--font-sans);
-    font-size: 7px;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: oklch(0.35 0.005 250);
-    user-select: none;
-  }
-
-  /* Brand name — on bezel surface below the strip, left-aligned
-     like "Nintendo GAME BOY" on the real hardware */
-  .bezel-brand {
-    padding: 6px 80px 0;
+    gap: 12px;
+    padding: 16px 25px 0;
   }
 
   .bezel-brand-text {
@@ -461,18 +510,13 @@
     color: var(--text-lo);
   }
 
-  /* ── Screen area — contains LED + well ──
-     Padding ratios from DMG at 80%: top 49px, sides 41px, bottom 41px */
   .bezel-screen-area {
-    position: relative;
-    padding: 30px 80px 10px 80px;
+    display: flex;
+    align-items: start;
+    padding: 12px 16px 10px;
   }
 
-  /* Power LED — left of screen, vertically centered with screen top area. */
   .power-led {
-    position: absolute;
-    top: 150px;
-    left: 30px;
     width: 10px;
     height: 10px;
     border-radius: 50%;
@@ -512,13 +556,13 @@
     z-index: 1;
   }
 
-  /* ── Bottom area — spec text + decorative ridges ── */
+  /* ── Bottom area — decorative ridges ── */
   .bezel-bottom {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    padding: 8px 80px 14px;
+    padding: 8px 52px 14px;
   }
 
   .bezel-ridges {
