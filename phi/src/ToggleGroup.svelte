@@ -13,7 +13,7 @@
    * FEATURES: Keyboard arrow navigation with wrap, divider lines between segments,
    * highlighted selected state. 22px height fits dense panel layouts.
    */
-  import { setHint, clearHint } from "$lib/stores/status";
+  import { setHint, clearHint } from "./stores/status";
 
   let {
     options,

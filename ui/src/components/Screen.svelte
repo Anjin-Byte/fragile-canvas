@@ -1,4 +1,6 @@
 <script lang="ts">
+  import wireframeUrl from "./wireframe.jpg";
+
   const SCREEN_W = 160;
   const SCREEN_H = 144;
 
@@ -36,9 +38,11 @@
     out vec4 fragColor;
 
     uniform sampler2D u_game;
+    uniform sampler2D u_overlay;
     uniform vec2 u_resolution;
     uniform vec3 u_palette[4];
     uniform float u_gridIntensity; // 0 = flat palette, 1 = full LCD model
+    uniform float u_overlayIntensity; // 0 = no overlay, 1 = full scratch effect
 
     // ── OKLAB color space conversion ──
     // Perceptually uniform blending for gap colors between shades
@@ -77,6 +81,14 @@
       float shadeRaw = texture(u_game, v_uv).r;
       int shade = clamp(int(shadeRaw * 255.0 + 0.5), 0, 3);
       vec3 pixelColor = u_palette[shade];
+
+      // ── Per-pixel variation: perturb lightness in OKLAB ──
+      // Simulates manufacturing variation in LCD cell response.
+      // Sampled per game-pixel so each dot has a consistent offset.
+      float variation = texture(u_overlay, v_uv).r - 0.5; // centered around 0
+      vec3 labPixel = toOklab(pixelColor);
+      labPixel.x += variation * u_overlayIntensity;
+      pixelColor = fromOklab(labPixel);
 
       // ── Grid: aligned to screen pixels (no moiré) ──
       float dotW = u_resolution.x / float(${SCREEN_W});
@@ -159,13 +171,16 @@
   let gl: WebGL2RenderingContext | null = null;
   let program: WebGLProgram | null = null;
   let gameTexture: WebGLTexture | null = null;
+  let overlayTexture: WebGLTexture | null = null;
   let texData: Uint8Array = new Uint8Array(SCREEN_W * SCREEN_H);
 
   // Uniforms
   let u_game: WebGLUniformLocation | null = null;
+  let u_overlay: WebGLUniformLocation | null = null;
   let u_resolution: WebGLUniformLocation | null = null;
   let u_palette: WebGLUniformLocation | null = null;
   let u_gridIntensity: WebGLUniformLocation | null = null;
+  let u_overlayIntensity: WebGLUniformLocation | null = null;
 
   function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
     const shader = gl.createShader(type)!;
@@ -245,16 +260,59 @@
     texData.fill(3); // shade 3 = darkest
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, SCREEN_W, SCREEN_H, 0, gl.RED, gl.UNSIGNED_BYTE, texData);
 
+    // Overlay texture — worn surface scratches
+    overlayTexture = gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    // Upload a 1x1 black placeholder until the image loads
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+
+    const overlayImg = new Image();
+    overlayImg.onload = () => {
+      if (!gl || !overlayTexture) return;
+
+      // Pre-blur by downscaling then upscaling on a temporary canvas
+      const scale = 0.125/4; // 1/8 resolution — controls blur amount
+      const small = document.createElement("canvas");
+      small.width = Math.max(1, Math.round(overlayImg.width * scale));
+      small.height = Math.max(1, Math.round(overlayImg.height * scale));
+      const sCtx = small.getContext("2d")!;
+      sCtx.drawImage(overlayImg, 0, 0, small.width, small.height);
+
+      const tmp = document.createElement("canvas");
+      tmp.width = overlayImg.width;
+      tmp.height = overlayImg.height;
+      const ctx = tmp.getContext("2d")!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(small, 0, 0, tmp.width, tmp.height);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
+      render();
+    };
+    overlayImg.src = wireframeUrl;
+
     // Get uniform locations
     u_game = gl.getUniformLocation(program, "u_game");
+    u_overlay = gl.getUniformLocation(program, "u_overlay");
     u_resolution = gl.getUniformLocation(program, "u_resolution");
     u_palette = gl.getUniformLocation(program, "u_palette");
     u_gridIntensity = gl.getUniformLocation(program, "u_gridIntensity");
+    u_overlayIntensity = gl.getUniformLocation(program, "u_overlayIntensity");
 
     // Set static uniforms
     gl.uniform1i(u_game, 0);
+    gl.uniform1i(u_overlay, 1);
     gl.uniform2f(u_resolution, el.width, el.height);
     gl.uniform1f(u_gridIntensity, 1.0); // full LCD grid
+    gl.uniform1f(u_overlayIntensity, 0.03); // subtle worn surface
 
     // Upload palette
     const paletteFlat = new Float32Array(12);

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import type { CpuState, EmulatorBackend } from "./types";
   import Screen from "./components/Screen.svelte";
-  import { Play, StepForward, SkipForward, Upload } from "lucide-svelte";
+  import { Play, StepForward, SkipForward, Upload, Gamepad2 } from "lucide-svelte";
 
   // ── Props ──
   let { backend }: { backend: EmulatorBackend } = $props();
@@ -141,6 +141,19 @@
     await loadRomData(buf);
   }
 
+  async function loadDefault() {
+    try {
+      const state = await backend.loadDefaultRom();
+      cpu = state;
+      loaded = true;
+      error = null;
+      paused = false;
+      startLoop();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function onCardClick() {
     fileInput?.click();
   }
@@ -207,6 +220,10 @@
           onchange={onFileSelect}
         />
       </div>
+      <div class="hero-divider">or</div>
+      <button class="ctrl-btn demo-btn" onclick={loadDefault}>
+        <Gamepad2 size={14} /> Play Tobu Tobu Girl
+      </button>
     </div>
   {:else}
     <!-- ── Playing state ── -->
@@ -356,6 +373,13 @@
     width: 0;
     height: 0;
     pointer-events: none;
+  }
+
+  .hero-divider {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    text-transform: lowercase;
   }
 
   /* ── Playing state ── */

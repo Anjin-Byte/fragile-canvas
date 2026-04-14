@@ -16,7 +16,7 @@
    */
   import { Portal } from "bits-ui";
   import { ChevronLeft, ChevronRight } from "lucide-svelte";
-  import { setHint, clearHint } from "$lib/stores/status";
+  import { setHint, clearHint } from "./stores/status";
 
   let {
     label,

@@ -6,3 +6,8 @@ declare module "*.svelte" {
   const component: typeof SvelteComponent;
   export default component;
 }
+
+declare module "*.jpg" {
+  const src: string;
+  export default src;
+}
