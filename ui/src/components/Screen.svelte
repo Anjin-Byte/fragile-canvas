@@ -1,5 +1,5 @@
 <script lang="ts">
-  import wireframeUrl from "./wireframe.jpg";
+  import substrateNormalUrl from "./substrate_normal.png";
 
   const SCREEN_W = 160;
   const SCREEN_H = 144;
@@ -83,9 +83,11 @@
       vec3 pixelColor = u_palette[shade];
 
       // ── Per-pixel variation: perturb lightness in OKLAB ──
-      // Simulates manufacturing variation in LCD cell response.
-      // Sampled per game-pixel so each dot has a consistent offset.
-      float variation = texture(u_overlay, v_uv).r - 0.5; // centered around 0
+      // Simulates the fine matte grain of the DMG front polarizer.
+      // The overlay is a scalar grain texture derived from a normal map,
+      // tiled across the screen at a density that reads as surface texture.
+      float grain = texture(u_overlay, v_uv * 12.0).r; // tiled 12x across screen
+      float variation = grain - 0.5; // centered around 0
       vec3 labPixel = toOklab(pixelColor);
       labPixel.x += variation * u_overlayIntensity;
       pixelColor = fromOklab(labPixel);
@@ -265,44 +267,50 @@
     texData.fill(3); // shade 3 = darkest
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, SCREEN_W, SCREEN_H, 0, gl.RED, gl.UNSIGNED_BYTE, texData);
 
-    // Overlay texture — worn surface scratches
+    // Overlay texture — substrate grain (from normal map)
     overlayTexture = gl.createTexture()!;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
 
-    // Upload a 1x1 black placeholder until the image loads
+    // Upload a 1x1 neutral placeholder until the image loads
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
 
     const overlayImg = new Image();
     overlayImg.onload = () => {
       if (!gl || !overlayTexture) return;
 
-      // Pre-blur by downscaling then upscaling on a temporary canvas
-      const scale = 0.125/4; // 1/8 resolution — controls blur amount
-      const small = document.createElement("canvas");
-      small.width = Math.max(1, Math.round(overlayImg.width * scale));
-      small.height = Math.max(1, Math.round(overlayImg.height * scale));
-      const sCtx = small.getContext("2d")!;
-      sCtx.drawImage(overlayImg, 0, 0, small.width, small.height);
-
+      // Convert normal map to scalar grain texture.
+      // R,G channels encode tangent-space surface slope; we compute
+      // the deviation magnitude from flat (0.5, 0.5) as a scalar.
       const tmp = document.createElement("canvas");
       tmp.width = overlayImg.width;
       tmp.height = overlayImg.height;
       const ctx = tmp.getContext("2d")!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(small, 0, 0, tmp.width, tmp.height);
+      ctx.drawImage(overlayImg, 0, 0);
+      const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
+      const px = imgData.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const dx = px[i] / 255 - 0.5;     // R → X slope
+        const dy = px[i + 1] / 255 - 0.5; // G → Y slope
+        const mag = Math.sqrt(dx * dx + dy * dy) * 2; // normalize: max ~0.707 → ~1.41, *2 fills range
+        const v = Math.min(mag * 255, 255);
+        px[i] = v;       // bake scalar into R
+        px[i + 1] = v;   // G (unused but consistent)
+        px[i + 2] = v;   // B (unused but consistent)
+        // alpha stays 255
+      }
+      ctx.putImageData(imgData, 0, 0);
 
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
       render();
     };
-    overlayImg.src = wireframeUrl;
+    overlayImg.src = substrateNormalUrl;
 
     // Get uniform locations
     u_game = gl.getUniformLocation(program, "u_game");
