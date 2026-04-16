@@ -22,8 +22,41 @@
   let rafRef = 0;
   let screen = $state<Screen>();
   let fileInput = $state<HTMLInputElement>();
+  let stageEl = $state<HTMLDivElement>();
+  let bezelW = $state(0);
+  let bezelH = $state(0);
+  let wellW = $state(480);
+  let wellH = $state(432);
   let fpsFrames = 0;
   let fpsLast = 0;
+
+  // ── Layout fitting ──
+  // Sizes the bezel and screen-well together so the entire unit
+  // scales proportionally within the stage area.
+  // Chrome = fixed-pixel bezel frame around the screen.
+  const CHROME_W = 32;  // bezel-screen-area horizontal padding (16px × 2)
+  const CHROME_H = 80;  // bezel-top (~30) + screen-area v-padding (22) + bezel-bottom (~28)
+
+  function fitLayout() {
+    if (!stageEl) return;
+    const rect = stageEl.getBoundingClientRect();
+    const maxW = rect.width * 0.90;
+    const maxH = rect.height * 0.85;
+    // Maximum screen dimensions after subtracting chrome
+    const maxScreenW = maxW - CHROME_W;
+    const maxScreenH = maxH - CHROME_H;
+    // Fit 160:144 screen within available area
+    const fitW = maxScreenH * 160 / 144;
+    if (fitW <= maxScreenW) {
+      wellW = fitW;
+      wellH = maxScreenH;
+    } else {
+      wellW = maxScreenW;
+      wellH = maxScreenW * 144 / 160;
+    }
+    bezelW = wellW + CHROME_W;
+    bezelH = wellH + CHROME_H;
+  }
 
   // ── Joypad ──
   const BTN_A = 1, BTN_B = 2, BTN_SELECT = 4, BTN_START = 8;
@@ -197,6 +230,17 @@
   }
 
   // ── Lifecycle ──
+
+  // Fit bezel + screen to stage when the playing view appears.
+  // $effect re-runs when stageEl becomes available (loaded → true).
+  $effect(() => {
+    if (!stageEl) return;
+    fitLayout();
+    const ro = new ResizeObserver(fitLayout);
+    ro.observe(stageEl);
+    return () => ro.disconnect();
+  });
+
   onMount(() => {
     const onDown = (e: KeyboardEvent) => handleKey(e, true);
     const onUp = (e: KeyboardEvent) => handleKey(e, false);
@@ -248,14 +292,14 @@
     </div>
   {:else}
     <!-- ── Playing state ── -->
-    <div class="stage">
-      <div class="screen-bezel">
+    <div class="stage" bind:this={stageEl}>
+      <div class="screen-bezel" style:width="{bezelW}px" style:height="{bezelH}px">
         <div class="bezel-top">
         <div class="power-led" class:led-on={running}></div>
           <span class="bezel-brand-text">DOT MATRIX WITH STEREO SOUND</span>
         </div>
         <div class="bezel-screen-area">
-          <div class="screen-well">
+          <div class="screen-well" style:width="{wellW}px" style:height="{wellH}px">
             <Screen bind:this={screen} />
           </div>
         </div>
@@ -476,11 +520,14 @@
     justify-content: center;
     gap: 0;
     position: relative;
+    padding-bottom: 24px; /* reserve space for the fixed status bar */
   }
 
   .screen-bezel {
     position: relative;
-    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     border-radius: 15px;
     background: linear-gradient(
       180deg,
@@ -511,8 +558,11 @@
   }
 
   .bezel-screen-area {
+    flex: 1;
+    min-height: 0;
     display: flex;
-    align-items: start;
+    align-items: center;
+    justify-content: center;
     padding: 12px 16px 10px;
   }
 
@@ -537,8 +587,6 @@
      Plain rectangle. Chamfer is on the bezel, not here. */
   .screen-well {
     position: relative;
-    width: 480px;
-    height: 432px;
     border-radius: 2px;
     overflow: hidden;
   }

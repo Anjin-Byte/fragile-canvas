@@ -195,12 +195,17 @@
   function initGL(el: HTMLCanvasElement) {
     canvas = el;
 
-    // Match canvas to actual display pixels — critical for
-    // FRAGCOORD-based grid to align without moiré.
+    // Size backing buffer as an integer multiple of 160×144.
+    // This preserves the exact game aspect ratio and gives the
+    // shader clean integer dot sizes (no sub-pixel distortion).
     const dpr = window.devicePixelRatio || 1;
     const rect = el.getBoundingClientRect();
-    el.width = Math.round(rect.width * dpr) || SCREEN_W * 3;
-    el.height = Math.round(rect.height * dpr) || SCREEN_H * 3;
+    const s0 = Math.max(1, Math.min(
+      Math.floor(rect.width * dpr / SCREEN_W),
+      Math.floor(rect.height * dpr / SCREEN_H)
+    ));
+    el.width = SCREEN_W * s0;
+    el.height = SCREEN_H * s0;
 
     gl = el.getContext("webgl2", { antialias: false, alpha: false })!;
     if (!gl) {
@@ -326,6 +331,50 @@
     // Initial render
     gl.viewport(0, 0, el.width, el.height);
     render();
+
+    // ── Resize handling ──
+    // ResizeObserver keeps the backing buffer in sync with CSS layout.
+    // DPR watcher handles moving between displays with different pixel ratios.
+
+    function resize() {
+      if (!gl || !canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      // Integer multiple of 160×144 — preserves exact game aspect ratio
+      // and gives the shader clean integer dot sizes.
+      const s = Math.max(1, Math.min(
+        Math.floor(rect.width * dpr / SCREEN_W),
+        Math.floor(rect.height * dpr / SCREEN_H)
+      ));
+      const w = SCREEN_W * s;
+      const h = SCREEN_H * s;
+      if (canvas.width === w && canvas.height === h) return;
+      canvas.width = w;
+      canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      gl.uniform2f(u_resolution, w, h);
+      render();
+    }
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(el);
+
+    // DPR changes (e.g., window dragged to a different monitor).
+    // Must re-register after each change since the query is tied to a specific value.
+    let dprMql: MediaQueryList | null = null;
+    function watchDPR() {
+      dprMql = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprMql.addEventListener("change", () => { resize(); watchDPR(); }, { once: true });
+    }
+    watchDPR();
+
+    return {
+      destroy() {
+        ro.disconnect();
+        // Clean up DPR listener — remove from current mql
+        dprMql?.removeEventListener("change", resize);
+      },
+    };
   }
 
   function render() {
