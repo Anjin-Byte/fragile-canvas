@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CpuState, EmulatorBackend } from "@fragile-canvas/ui";
+import type { CpuState, EmulatorBackend, BundledRomInfo } from "@fragile-canvas/ui";
 import { AudioManager } from "./audio";
 
 const audio = new AudioManager();
@@ -32,6 +32,22 @@ export const tauriBackend: EmulatorBackend = {
     await audio.init();
     await audio.resume();
     return invoke<CpuState>("load_default_rom");
+  },
+
+  listBundledRoms(): BundledRomInfo[] {
+    // Synchronous — the ROM list is compiled into the binary.
+    // Tauri invoke is async, so we cache it eagerly.
+    // For now, mirror the static list from the sm83 crate.
+    return [
+      { id: "tobu-tobu-girl-dx", title: "Tobu Tobu Girl DX", author: "Tangram Games" },
+      { id: "cryohazard", title: "Cryohazard", author: "Incube8 Games" },
+    ];
+  },
+
+  async loadBundledRom(id: string): Promise<CpuState> {
+    await audio.init();
+    await audio.resume();
+    return invoke<CpuState>("load_bundled_rom", { id });
   },
 
   async step(ticks: number): Promise<CpuState> {

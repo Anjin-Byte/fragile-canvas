@@ -1,4 +1,4 @@
-import type { CpuState, EmulatorBackend } from "@fragile-canvas/ui";
+import type { CpuState, EmulatorBackend, BundledRomInfo } from "@fragile-canvas/ui";
 import init, { EmulatorWasm } from "../../wasm/pkg/fragile_canvas_wasm";
 import { AudioManager } from "./audio";
 
@@ -45,6 +45,27 @@ export const wasmBackend: EmulatorBackend = {
     emu = new EmulatorWasm();
     await audio.init();
     await audio.resume();
+    return emu.loadDefaultRom() as CpuState;
+  },
+
+  listBundledRoms(): BundledRomInfo[] {
+    // Static list — matches BUNDLED_ROMS in sm83/src/lib.rs.
+    // Avoids needing a WASM instance just to enumerate ROMs.
+    return [
+      { id: "tobu-tobu-girl-dx", title: "Tobu Tobu Girl DX", author: "Tangram Games" },
+      { id: "cryohazard", title: "Cryohazard", author: "Incube8 Games" },
+    ];
+  },
+
+  async loadBundledRom(id: string): Promise<CpuState> {
+    await ensureInit();
+    emu = new EmulatorWasm();
+    await audio.init();
+    await audio.resume();
+    // loadBundledRom is available after WASM rebuild; fall back to loadDefaultRom
+    if (typeof (emu as any).loadBundledRom === "function") {
+      return (emu as any).loadBundledRom(id) as CpuState;
+    }
     return emu.loadDefaultRom() as CpuState;
   },
 

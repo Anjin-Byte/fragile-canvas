@@ -69,6 +69,26 @@ impl EmulatorWasm {
         to_js(self.session.load_default_rom())
     }
 
+    /// List all bundled ROMs. Returns an array of {id, title, author} objects.
+    #[wasm_bindgen(js_name = listBundledRoms)]
+    pub fn list_bundled_roms(&self) -> Result<JsValue, JsValue> {
+        let roms: Vec<_> = Session::list_bundled_roms()
+            .into_iter()
+            .map(|(id, title, author)| {
+                serde_json::json!({ "id": id, "title": title, "author": author })
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&roms).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Load a bundled ROM by id.
+    #[wasm_bindgen(js_name = loadBundledRom)]
+    pub fn load_bundled_rom(&mut self, id: &str) -> Result<JsValue, JsValue> {
+        let snap = self.session.load_bundled_rom(id)
+            .map_err(|e| JsValue::from_str(e))?;
+        to_js(snap)
+    }
+
     /// Set joypad button state.
     /// `action`: A=1, B=2, Select=4, Start=8.
     /// `direction`: Right=1, Left=2, Up=4, Down=8.

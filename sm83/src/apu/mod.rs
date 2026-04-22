@@ -159,8 +159,13 @@ impl Apu {
             return;
         }
 
-        // When powered off, all writes except NR52 and wave RAM are ignored
+        // When powered off, all writes except NR52, wave RAM, and NR41 are
+        // ignored.  NR41 (CH4 length load) is writable on DMG even when the
+        // APU is off — the length counter register is not gated by power.
         if !self.power {
+            if addr == NR41 {
+                self.ch4.write(0, value, 0);
+            }
             return;
         }
 

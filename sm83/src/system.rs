@@ -32,14 +32,15 @@ impl GameBoy {
     /// Execute one CPU instruction with per-M-cycle subsystem ticking.
     /// Returns the total number of T-cycles consumed.
     ///
-    /// Each M-cycle: `cpu.step_m()` does one bus operation, then all
-    /// subsystems advance by 4 T-cycles.  This loop continues until the
-    /// instruction completes (or a HALT cycle burns).
+    /// Each M-cycle: subsystems advance by 4 T-cycles, then
+    /// `cpu.step_m()` does one bus operation.  This matches real DMG
+    /// hardware where the CPU sees post-tick subsystem state within
+    /// the same M-cycle.
     pub fn tick(&mut self) -> u8 {
         let mut total_t: u8 = 0;
         loop {
-            let result = self.cpu.step_m(&mut self.bus);
             self.advance_subsystems(4);
+            let result = self.cpu.step_m(&mut self.bus);
             total_t += 4;
             match result {
                 MCycleResult::Continue => continue,

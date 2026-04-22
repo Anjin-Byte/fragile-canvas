@@ -91,6 +91,12 @@ impl PulseChannel {
                         }
                     }
                     self.sweep_reg = value;
+                    // Propagate period/shift/negate immediately — on real
+                    // hardware the sweep unit reads NR10 directly, so mid-sweep
+                    // writes take effect on the next timer reload/calculation.
+                    if let Some(ref mut sweep) = self.sweep {
+                        sweep.write_nr10(value);
+                    }
                 }
             }
             1 => {
@@ -110,15 +116,22 @@ impl PulseChannel {
                 let was_enabled = self.length.enabled;
                 let now_enabled = value & 0x40 != 0;
                 self.length.enabled = now_enabled;
-
-                // Extra length clock on enable transition (without trigger):
-                // If length enable goes 0→1 on an even frame step (next step
-                // won't clock length), and trigger is NOT also set, tick length.
-                // When trigger IS set, trigger() handles the extra clock itself.
                 let trigger = value & 0x80 != 0;
-                if !was_enabled && now_enabled && frame_step & 1 == 1 && !trigger {
+
+                // APU glitch: if length enable transitions 0→1 on an odd
+                // frame step (next step won't clock length), tick the length
+                // counter once.  This applies regardless of whether trigger
+                // is also set — the same condition, same tick.
+                // Ref: SameBoy apu.c, PanDocs "Audio details — Obscure Behavior"
+                if !was_enabled && now_enabled && frame_step & 1 == 1
+                    && self.length.counter > 0
+                {
                     if self.length.tick() {
-                        self.enabled = false;
+                        // If the extra tick zeroed the counter and trigger
+                        // is NOT set, disable the channel.
+                        if !trigger {
+                            self.enabled = false;
+                        }
                     }
                 }
 
@@ -137,13 +150,16 @@ impl PulseChannel {
         }
         self.length.trigger();
 
-        // Extra length clock on trigger: if length is enabled and we're
-        // on an odd frame sequencer step, the freshly-(re)loaded length
-        // counter gets an immediate tick.
-        if self.length.enabled && frame_step & 1 == 1 {
-            if self.length.tick() {
-                self.enabled = false;
-            }
+        // If trigger reloaded the counter (was 0 → max) AND length is
+        // enabled on an odd frame step, the freshly-loaded counter gets
+        // decremented: max → max-1.  (PanDocs: "set to 63 instead of 64")
+        // This is the same glitch as the extra tick in the write handler,
+        // but applied to the just-reloaded value.
+        if self.length.enabled && frame_step & 1 == 1
+            && self.length.counter == self.length.max_length
+        {
+            self.length.tick();
+            // Don't disable channel — trigger just re-enabled it.
         }
 
         self.envelope.trigger(self.envelope_reg);

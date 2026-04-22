@@ -79,9 +79,14 @@ impl NoiseChannel {
                 self.length.enabled = now_enabled;
 
                 let trigger = value & 0x80 != 0;
-                if !was_enabled && now_enabled && frame_step & 1 == 1 && !trigger {
+
+                if !was_enabled && now_enabled && frame_step & 1 == 1
+                    && self.length.counter > 0
+                {
                     if self.length.tick() {
-                        self.enabled = false;
+                        if !trigger {
+                            self.enabled = false;
+                        }
                     }
                 }
 
@@ -100,10 +105,10 @@ impl NoiseChannel {
         }
         self.length.trigger();
 
-        if self.length.enabled && frame_step & 1 == 1 {
-            if self.length.tick() {
-                self.enabled = false;
-            }
+        if self.length.enabled && frame_step & 1 == 1
+            && self.length.counter == self.length.max_length
+        {
+            self.length.tick();
         }
 
         self.envelope.trigger(self.envelope_reg);

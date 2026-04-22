@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { CpuState, EmulatorBackend } from "./types";
+  import type { CpuState, EmulatorBackend, BundledRomInfo } from "./types";
   import Screen from "./components/Screen.svelte";
-  import { Play, StepForward, SkipForward, Upload, Gamepad2 } from "lucide-svelte";
+  import { Play, StepForward, SkipForward, Upload, Gamepad2, ChevronDown } from "lucide-svelte";
 
   // ── Props ──
   let { backend }: { backend: EmulatorBackend } = $props();
@@ -14,6 +14,8 @@
   let running = $state(false);
   let paused = $state(false);
   let dragging = $state(false);
+  let romPickerOpen = $state(false);
+  let bundledRoms = $state<BundledRomInfo[]>([]);
   let fps = $state(0);
   let frameCount = $state(0);
 
@@ -187,6 +189,24 @@
     }
   }
 
+  async function loadBundled(id: string) {
+    romPickerOpen = false;
+    try {
+      const state = await backend.loadBundledRom(id);
+      cpu = state;
+      loaded = true;
+      error = null;
+      paused = false;
+      startLoop();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  function toggleRomPicker() {
+    romPickerOpen = !romPickerOpen;
+  }
+
   function onCardClick() {
     fileInput?.click();
   }
@@ -242,14 +262,23 @@
   });
 
   onMount(() => {
+    bundledRoms = backend.listBundledRoms();
+
     const onDown = (e: KeyboardEvent) => handleKey(e, true);
     const onUp = (e: KeyboardEvent) => handleKey(e, false);
+    const onClickOutside = (e: MouseEvent) => {
+      if (romPickerOpen && !(e.target as Element)?.closest(".rom-picker")) {
+        romPickerOpen = false;
+      }
+    };
     window.addEventListener("keydown", onDown);
     window.addEventListener("keyup", onUp);
+    window.addEventListener("pointerdown", onClickOutside);
 
     return () => {
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
+      window.removeEventListener("pointerdown", onClickOutside);
       runningRef = false;
       cancelAnimationFrame(rafRef);
     };
@@ -282,13 +311,28 @@
           <Upload size={16} /> Load a ROM file
         </button>
         <span class="hero-divider">or</span>
-        <button class="hero-btn hero-btn-secondary" onclick={loadDefault}>
-          <Gamepad2 size={16} /> Play Tobu Tobu Girl
-        </button>
+        <div class="rom-picker">
+          <button class="hero-btn hero-btn-secondary" onclick={toggleRomPicker}>
+            <Gamepad2 size={16} />
+            Play a bundled game
+            <span class="rom-picker-chevron" class:open={romPickerOpen}>
+              <ChevronDown size={14} />
+            </span>
+          </button>
+          {#if romPickerOpen}
+            <div class="rom-picker-menu">
+              {#each bundledRoms as rom}
+                <button class="rom-picker-item" onclick={() => loadBundled(rom.id)}>
+                  <span class="rom-picker-title">{rom.title}</span>
+                  <span class="rom-picker-author">{rom.author}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
 
       <p class="hero-hint">or drop a .gb file anywhere</p>
-      <p class="hero-credit">Tobu Tobu Girl © Tangram Games · CC BY 4.0</p>
     </div>
   {:else}
     <!-- ── Playing state ── -->
@@ -496,10 +540,67 @@
     letter-spacing: 0.02em;
   }
 
-  .hero-credit {
+  /* ── ROM picker dropdown ── */
+  .rom-picker {
+    position: relative;
+  }
+
+  .rom-picker-chevron {
+    display: inline-flex;
+    transition: transform 0.15s ease;
+  }
+
+  .rom-picker-chevron.open {
+    transform: rotate(180deg);
+  }
+
+  .rom-picker-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    min-width: max(100%, 240px);
+    background: var(--surface-3);
+    border: 1px solid var(--stroke-mid);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-overlay);
+    overflow: hidden;
+    z-index: 20;
+  }
+
+  .rom-picker-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--stroke-lo);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s ease;
+  }
+
+  .rom-picker-item:last-child {
+    border-bottom: none;
+  }
+
+  .rom-picker-item:hover {
+    background: var(--fill-mid);
+  }
+
+  .rom-picker-title {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-hi);
+  }
+
+  .rom-picker-author {
     font-family: var(--font-mono);
     font-size: 10px;
-    color: var(--text-faint);
+    color: var(--text-subtle);
     letter-spacing: 0.02em;
   }
 

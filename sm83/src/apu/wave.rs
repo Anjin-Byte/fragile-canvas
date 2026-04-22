@@ -82,9 +82,14 @@ impl WaveChannel {
                 self.length.enabled = now_enabled;
 
                 let trigger = value & 0x80 != 0;
-                if !was_enabled && now_enabled && frame_step & 1 == 1 && !trigger {
+
+                if !was_enabled && now_enabled && frame_step & 1 == 1
+                    && self.length.counter > 0
+                {
                     if self.length.tick() {
-                        self.enabled = false;
+                        if !trigger {
+                            self.enabled = false;
+                        }
                     }
                 }
 
@@ -97,13 +102,28 @@ impl WaveChannel {
     }
 
     /// Read wave RAM byte.
+    ///
+    /// DMG quirk: while CH3 is actively playing, all reads return the byte
+    /// at the current playback position, ignoring the address.
     pub fn read_wave_ram(&self, offset: u8) -> u8 {
-        self.wave_ram[offset as usize & 0x0F]
+        if self.enabled {
+            self.wave_ram[(self.wave_position / 2) as usize]
+        } else {
+            self.wave_ram[offset as usize & 0x0F]
+        }
     }
 
     /// Write wave RAM byte.
+    ///
+    /// DMG quirk: while CH3 is actively playing, all writes go to the byte
+    /// at the current playback position, ignoring the address.
     pub fn write_wave_ram(&mut self, offset: u8, value: u8) {
-        self.wave_ram[offset as usize & 0x0F] = value;
+        if self.enabled {
+            let idx = (self.wave_position / 2) as usize;
+            self.wave_ram[idx] = value;
+        } else {
+            self.wave_ram[offset as usize & 0x0F] = value;
+        }
     }
 
     /// Whether the DAC is enabled (NR30 bit 7).
@@ -118,10 +138,10 @@ impl WaveChannel {
         }
         self.length.trigger();
 
-        if self.length.enabled && frame_step & 1 == 1 {
-            if self.length.tick() {
-                self.enabled = false;
-            }
+        if self.length.enabled && frame_step & 1 == 1
+            && self.length.counter == self.length.max_length
+        {
+            self.length.tick();
         }
 
         self.period_timer = (2048 - self.period()) * 2;

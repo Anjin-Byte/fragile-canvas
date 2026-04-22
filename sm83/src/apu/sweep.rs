@@ -8,15 +8,15 @@ pub struct Sweep {
     /// Shadow copy of the frequency, used for calculations.
     pub shadow_freq: u16,
     /// Countdown timer, reloaded from period.
-    timer: u8,
+    pub timer: u8,
     /// Sweep period from NR10 (0 treated as 8).
-    period: u8,
+    pub period: u8,
     /// Right-shift amount from NR10.
-    shift: u8,
+    pub shift: u8,
     /// True = subtract (negate), false = add.
-    negate: bool,
+    pub negate: bool,
     /// Whether sweep is active (period or shift nonzero).
-    enabled: bool,
+    pub enabled: bool,
     /// Whether negate mode was used since last trigger.
     /// Writing NR10 without negate after using negate disables the channel.
     negate_used: bool,
@@ -33,6 +33,16 @@ impl Sweep {
             enabled: false,
             negate_used: false,
         }
+    }
+
+    /// Update period, shift, and negate from an NR10 write.
+    /// On real hardware, these take effect immediately (the timer uses the
+    /// current period when reloading, and calculations use the current shift).
+    /// Only the shadow frequency is latched on trigger.
+    pub fn write_nr10(&mut self, reg: u8) {
+        self.period = (reg >> 4) & 0x07;
+        self.shift = reg & 0x07;
+        self.negate = reg & 0x08 != 0;
     }
 
     /// Clock the sweep. Returns `Some(new_freq)` if the frequency should be

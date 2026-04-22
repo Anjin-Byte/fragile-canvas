@@ -181,6 +181,13 @@ impl Timer {
         self.system_counter
     }
 
+    /// Set the system counter to a specific value (for post-boot initialization).
+    /// Also updates the previous DIV-APU bit so the next tick detects edges correctly.
+    pub fn set_system_counter(&mut self, value: u16) {
+        self.system_counter = value;
+        self.prev_div_apu_bit = value & (1 << 12) != 0;
+    }
+
     /// DIV register value: bits [15:8] of the system counter.
     pub fn div(&self) -> u8 {
         (self.system_counter >> 8) as u8

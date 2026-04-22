@@ -73,6 +73,23 @@ impl Session {
         self.load_rom(crate::DEFAULT_ROM)
     }
 
+    /// List all bundled ROMs (id, title, author).
+    pub fn list_bundled_roms() -> Vec<(&'static str, &'static str, &'static str)> {
+        crate::BUNDLED_ROMS
+            .iter()
+            .map(|r| (r.id, r.title, r.author))
+            .collect()
+    }
+
+    /// Load a bundled ROM by id. Returns Err if the id is not found.
+    pub fn load_bundled_rom(&mut self, id: &str) -> Result<CpuSnapshot, &'static str> {
+        let rom = crate::BUNDLED_ROMS
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or("unknown bundled ROM id")?;
+        Ok(self.load_rom(rom.data))
+    }
+
     /// Step by N M-cycles (manual stepping, ignores governor).
     pub fn step(&mut self, m_cycles: u32) -> Result<CpuSnapshot, &'static str> {
         let gb = self.gb.as_mut().ok_or("no ROM loaded")?;
@@ -237,6 +254,7 @@ impl Session {
 
         // DMG/MGB post-boot I/O register state (from Pandocs Power Up Sequence)
         bus.if_reg = 0x01;              // IF  = VBlank (upper bits read as 1 via bus mask)
+        bus.timer.set_system_counter(0xABCC); // DIV = 0xAB after boot ROM
         bus.write(0xFF00, 0xCF);        // P1  (joypad)
         bus.write(0xFF02, 0x7E);        // SC  (serial control)
         bus.write(0xFF07, 0xF8);        // TAC (timer control — disabled, upper bits set)

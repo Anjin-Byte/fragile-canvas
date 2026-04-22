@@ -9,7 +9,7 @@ pub struct LengthCounter {
     /// Current countdown value.
     pub counter: u16,
     /// Maximum length (64 or 256).
-    max_length: u16,
+    pub max_length: u16,
     /// Whether length expiry disables the channel (NRx4 bit 6).
     pub enabled: bool,
 }

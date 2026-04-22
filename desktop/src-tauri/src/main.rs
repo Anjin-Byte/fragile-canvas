@@ -65,6 +65,12 @@ fn load_default_rom(emu: State<Emulator>) -> Result<CpuState, String> {
 }
 
 #[tauri::command]
+fn load_bundled_rom(emu: State<Emulator>, id: String) -> Result<CpuState, String> {
+    let mut session = emu.0.lock().unwrap();
+    ok_result(session.load_bundled_rom(&id))
+}
+
+#[tauri::command]
 fn set_buttons(emu: State<Emulator>, action: u8, direction: u8) {
     let mut session = emu.0.lock().unwrap();
     session.set_buttons(action, direction);
@@ -152,6 +158,7 @@ fn main() {
             load_rom,
             load_rom_no_boot,
             load_default_rom,
+            load_bundled_rom,
             set_buttons,
             step,
             tick_frame,
