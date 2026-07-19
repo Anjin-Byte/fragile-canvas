@@ -9,7 +9,7 @@
    * FEATURES: Chevron toggle, slide animation (140ms), optional `card`
    * variant with rounded border container. Uppercase title, 11px font.
    */
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { slide } from "svelte/transition";
   import { ChevronRight } from "lucide-svelte";
 
@@ -26,7 +26,7 @@
     card?: boolean;
   } = $props();
 
-  const storageKey = `panel-section:${sectionId}`;
+  const storageKey = untrack(() => `panel-section:${sectionId}`);
   let open = $state(localStorage.getItem(storageKey) !== "false");
 
   function toggle() {

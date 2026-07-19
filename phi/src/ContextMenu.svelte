@@ -13,7 +13,7 @@
    *
    * FEATURES: Viewport overflow clamping, click-outside dismissal, z-index 1000.
    */
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
 
   export interface ContextMenuItem {
     /** Unique action ID passed to onaction. */
@@ -53,8 +53,8 @@
   // ─── Positioning ─────────────────────────────────────────────────────────
   // Clamp so the menu doesn't overflow the viewport.
 
-  let posX = $state(x);
-  let posY = $state(y);
+  let posX = $state(untrack(() => x));
+  let posY = $state(untrack(() => y));
 
   onMount(() => {
     if (!menuEl) return;
@@ -125,8 +125,9 @@
   }
 </script>
 
-<!-- Invisible backdrop to catch clicks outside the menu -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- Invisible backdrop to catch clicks outside the menu. Escape/blur also
+     close it (handled on the menu), so no keyboard handler is needed here. -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div class="ctx-backdrop" onclick={handleBackdropClick} oncontextmenu={(e) => { e.preventDefault(); handleBackdropClick(); }}></div>
 
 <!-- The menu itself -->
@@ -150,6 +151,7 @@
       class:ctx-danger={item.danger}
       class:ctx-focused={focusIdx === i}
       role="menuitem"
+      tabindex="-1"
       aria-disabled={item.disabled}
       onclick={() => handleItemClick(item)}
       onpointerenter={() => { if (!item.disabled) focusIdx = i; }}

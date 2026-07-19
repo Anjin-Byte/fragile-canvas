@@ -111,7 +111,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div
   class="treelist-row"
   class:selected
@@ -179,7 +179,8 @@
           {#if typeof cell.icon === "string"}
             {cell.icon}
           {:else}
-            <svelte:component this={cell.icon} size={12} />
+            {@const Icon = cell.icon}
+            <Icon size={12} />
           {/if}
         </button>
       </span>

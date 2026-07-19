@@ -1,100 +1,68 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
-  import DockTabs from "./DockTabs.svelte";
-  import DropOverlay from "./DropOverlay.svelte";
-  import { detectZone, hasPanelDrag, getDragPayload, type DropZonePosition } from "./dnd";
+  /**
+   * Chrome for one dock group (leaf): tab bar + content backdrop.
+   *
+   * Panel content is NOT rendered here — DockLayout renders every panel in
+   * a keep-alive layer above the groups, positioned into this group's
+   * content area. That is what lets panels survive tab switches and moves
+   * between groups without unmounting.
+   *
+   * Docked groups: double-clicking the tab strip toggles maximize; the
+   * ⧉ control floats the group. Floating groups: ⇱ docks it back.
+   */
+  import { DockModel, DockLeaf } from "./model.svelte.js";
+  import DockTabs, { type ResolvedPanelDef } from "./DockTabs.svelte";
 
   let {
-    groupId,
-    panels,
-    activePanel,
-    panel,
-    onactivate,
-    onclose,
-    dragActive = false,
-    ondragstartpanel,
-    ondragendpanel,
-    ondragover: onDragOverGroup,
-    ondragleave: onDragLeaveGroup,
-    ondrop: onDropGroup,
+    model,
+    leaf,
+    floating = false,
+    getDef,
+    ontabdragstart,
+    ontabdragend,
+    tabDropIndex = null,
   }: {
-    groupId: string;
-    panels: string[];
-    activePanel: string;
-    panel: Snippet<[string]>;
-    onactivate: (groupId: string, panelId: string) => void;
-    onclose?: (groupId: string, panelId: string) => void;
-    /** Whether any panel drag is currently active (from DockLayout). */
-    dragActive?: boolean;
-    ondragstartpanel?: (groupId: string, panelId: string, event: DragEvent) => void;
-    ondragendpanel?: () => void;
-    ondragover?: (groupId: string, zone: DropZonePosition) => void;
-    ondragleave?: (groupId: string) => void;
-    ondrop?: (groupId: string, zone: DropZonePosition) => void;
+    model: DockModel;
+    leaf: DockLeaf;
+    /** Whether this group renders inside a floating window. */
+    floating?: boolean;
+    /** Panel registry resolver (from DockLayout's panelDefs). */
+    getDef?: (id: string) => ResolvedPanelDef;
+    /** Fired when one of this group's tabs starts dragging. */
+    ontabdragstart?: (panelId: string, event: DragEvent) => void;
+    /** Fired when a tab drag ends (regardless of drop). */
+    ontabdragend?: () => void;
+    /** Insertion caret position during a drag over this strip, or null. */
+    tabDropIndex?: number | null;
   } = $props();
-
-  let containerEl: HTMLDivElement | undefined = $state();
-  let currentZone = $state<DropZonePosition | null>(null);
-  let isTarget = $state(false);
-
-  function handleDragOver(e: DragEvent) {
-    if (!e.dataTransfer || !hasPanelDrag(e.dataTransfer)) return;
-    e.preventDefault(); // Required for drop to fire
-    e.dataTransfer.dropEffect = "move";
-
-    if (!containerEl) return;
-    const rect = containerEl.getBoundingClientRect();
-    const zone = detectZone(rect, e.clientX, e.clientY);
-    currentZone = zone;
-    isTarget = true;
-    onDragOverGroup?.(groupId, zone);
-  }
-
-  function handleDragLeave(e: DragEvent) {
-    // Only clear if leaving the group entirely (not entering a child)
-    if (containerEl && e.relatedTarget && containerEl.contains(e.relatedTarget as Node)) return;
-    currentZone = null;
-    isTarget = false;
-    onDragLeaveGroup?.(groupId);
-  }
-
-  function handleDrop(e: DragEvent) {
-    e.preventDefault();
-    if (currentZone) {
-      onDropGroup?.(groupId, currentZone);
-    }
-    currentZone = null;
-    isTarget = false;
-  }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="dock-group"
-  data-group-id={groupId}
-  bind:this={containerEl}
-  ondragover={handleDragOver}
-  ondragleave={handleDragLeave}
-  ondrop={handleDrop}
+  class:active={model.activeLeafId === leaf.id}
+  class:floating
+  data-group-id={leaf.id}
+  ondblclick={(e) => {
+    // Only the tab strip background/tabs toggle maximize, not content.
+    if (!floating && (e.target as HTMLElement).closest(".dock-tabs")) {
+      model.toggleMaximize(leaf.id);
+    }
+  }}
 >
   <DockTabs
-    {panels}
-    {activePanel}
-    {groupId}
-    onactivate={(panelId) => onactivate(groupId, panelId)}
-    onclose={onclose ? (panelId) => onclose?.(groupId, panelId) : undefined}
-    ondragstartpanel={(panelId, event) => ondragstartpanel?.(groupId, panelId, event)}
-    ondragendpanel={ondragendpanel}
+    panels={leaf.panels}
+    activePanel={leaf.activePanel}
+    {getDef}
+    {floating}
+    onactivate={(panelId) => model.activatePanel(leaf.id, panelId)}
+    onclose={(panelId) => model.closePanel(leaf.id, panelId)}
+    onfloat={() => (floating ? model.unfloatLeaf(leaf.id) : model.floatLeaf(leaf.id))}
+    ondragstartpanel={ontabdragstart}
+    ondragendpanel={ontabdragend}
+    dropIndex={tabDropIndex}
   />
-  <div class="dock-group-content">
-    {#key activePanel}
-      {@render panel(activePanel)}
-    {/key}
-  </div>
-
-  {#if dragActive && isTarget}
-    <DropOverlay zone={currentZone} />
-  {/if}
+  <div class="dock-group-content"></div>
 </div>
 
 <style>
@@ -107,12 +75,19 @@
     background: var(--surface-3, oklch(0.18 0.015 250));
     border: 1px solid var(--stroke-lo, oklch(1 0 0 / 0.06));
     box-sizing: border-box;
-    position: relative; /* For DropOverlay absolute positioning */
+  }
+
+  .dock-group.active {
+    border-color: var(--stroke-mid, oklch(1 0 0 / 0.12));
+  }
+
+  .dock-group.floating {
+    border-color: var(--stroke-mid, oklch(1 0 0 / 0.12));
+    border-radius: 6px;
   }
 
   .dock-group-content {
     flex: 1;
-    overflow: auto;
     min-width: 0;
     min-height: 0;
   }

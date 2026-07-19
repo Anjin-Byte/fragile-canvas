@@ -11,15 +11,16 @@ export default defineConfig({
         '.',
         '../wasm/pkg',
         '../ui',
+        '../phi',
       ],
     },
   },
-  // Treat the linked ui package as source (not pre-bundled)
-  // so the Svelte plugin processes .svelte files from ../ui/src
+  // Treat the linked ui and phi packages as source (not pre-bundled)
+  // so the Svelte plugin processes their .svelte/.svelte.ts files
   optimizeDeps: {
-    exclude: ['@fragile-canvas/ui'],
+    exclude: ['@fragile-canvas/ui', '@gestalt/phi'],
   },
   ssr: {
-    noExternal: ['@fragile-canvas/ui'],
+    noExternal: ['@fragile-canvas/ui', '@gestalt/phi'],
   },
 })

@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { detectZone, zoneToDirection } from "./dnd";
+import {
+  detectZone,
+  zoneToDirection,
+  rectContains,
+  insertionIndex,
+  insertionToReorderIndex,
+  setDragPayload,
+  getDragPayload,
+  hasPanelDrag,
+  PANEL_DRAG_MIME,
+} from "./dnd";
 
 // Helper to create a DOMRect-like object
 function rect(x: number, y: number, w: number, h: number): DOMRect {
@@ -76,6 +86,88 @@ describe("detectZone", () => {
     expect(detectZone(small, 10, 50)).toBe("left");
     expect(detectZone(small, 90, 50)).toBe("right");
     expect(detectZone(small, 50, 50)).toBe("center");
+  });
+});
+
+describe("rectContains", () => {
+  const r = rect(100, 200, 500, 400);
+
+  it("contains interior points, excludes far edges", () => {
+    expect(rectContains(r, 100, 200)).toBe(true); // near edges inclusive
+    expect(rectContains(r, 350, 400)).toBe(true);
+    expect(rectContains(r, 600, 400)).toBe(false); // right edge exclusive
+    expect(rectContains(r, 350, 600)).toBe(false); // bottom edge exclusive
+    expect(rectContains(r, 99, 400)).toBe(false);
+  });
+});
+
+describe("insertionIndex", () => {
+  // Tabs with midpoints at 50, 150, 250.
+  const midpoints = [50, 150, 250];
+
+  it("before the first midpoint inserts at 0", () => {
+    expect(insertionIndex(midpoints, 10)).toBe(0);
+  });
+
+  it("between midpoints inserts between the tabs", () => {
+    expect(insertionIndex(midpoints, 100)).toBe(1);
+    expect(insertionIndex(midpoints, 200)).toBe(2);
+  });
+
+  it("past the last midpoint appends", () => {
+    expect(insertionIndex(midpoints, 900)).toBe(3);
+  });
+
+  it("empty strip inserts at 0", () => {
+    expect(insertionIndex([], 500)).toBe(0);
+  });
+});
+
+describe("insertionToReorderIndex", () => {
+  it("insertion after the source shifts down by one", () => {
+    // [a, b, c]: dragging a (from 0) to insertion 2 → final position 1.
+    expect(insertionToReorderIndex(2, 0)).toBe(1);
+    expect(insertionToReorderIndex(3, 0)).toBe(2);
+  });
+
+  it("insertion at or before the source is unchanged", () => {
+    expect(insertionToReorderIndex(0, 2)).toBe(0);
+    expect(insertionToReorderIndex(2, 2)).toBe(2);
+  });
+});
+
+describe("payload helpers", () => {
+  function fakeDataTransfer(): DataTransfer {
+    const store = new Map<string, string>();
+    const types: string[] = [];
+    return {
+      types,
+      setData(type: string, value: string) {
+        store.set(type, value);
+        if (!types.includes(type)) types.push(type);
+      },
+      getData(type: string) {
+        return store.get(type) ?? "";
+      },
+      effectAllowed: "",
+      dropEffect: "",
+    } as unknown as DataTransfer;
+  }
+
+  it("roundtrips a payload", () => {
+    const dt = fakeDataTransfer();
+    setDragPayload(dt, { panelId: "p1", sourceGroupId: "g1" });
+    expect(hasPanelDrag(dt)).toBe(true);
+    expect(getDragPayload(dt)).toEqual({ panelId: "p1", sourceGroupId: "g1" });
+    expect(dt.effectAllowed).toBe("move");
+  });
+
+  it("returns null for non-panel drags and corrupt payloads", () => {
+    const dt = fakeDataTransfer();
+    expect(hasPanelDrag(dt)).toBe(false);
+    expect(getDragPayload(dt)).toBeNull();
+    dt.setData(PANEL_DRAG_MIME, "not json{");
+    expect(getDragPayload(dt)).toBeNull();
   });
 });
 

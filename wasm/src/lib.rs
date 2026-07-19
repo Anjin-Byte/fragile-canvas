@@ -31,6 +31,13 @@ impl From<CpuSnapshot> for CpuState {
     }
 }
 
+#[derive(Serialize)]
+struct BundledRom {
+    id: String,
+    title: String,
+    author: String,
+}
+
 fn to_js(snap: CpuSnapshot) -> Result<JsValue, JsValue> {
     let state: CpuState = snap.into();
     serde_wasm_bindgen::to_value(&state).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -72,10 +79,12 @@ impl EmulatorWasm {
     /// List all bundled ROMs. Returns an array of {id, title, author} objects.
     #[wasm_bindgen(js_name = listBundledRoms)]
     pub fn list_bundled_roms(&self) -> Result<JsValue, JsValue> {
-        let roms: Vec<_> = Session::list_bundled_roms()
+        let roms: Vec<BundledRom> = Session::list_bundled_roms()
             .into_iter()
-            .map(|(id, title, author)| {
-                serde_json::json!({ "id": id, "title": title, "author": author })
+            .map(|(id, title, author)| BundledRom {
+                id: id.to_string(),
+                title: title.to_string(),
+                author: author.to_string(),
             })
             .collect();
         serde_wasm_bindgen::to_value(&roms).map_err(|e| JsValue::from_str(&e.to_string()))

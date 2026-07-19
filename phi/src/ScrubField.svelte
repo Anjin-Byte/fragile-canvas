@@ -14,6 +14,7 @@
    * with repeat-on-hold, double-click reset to default, right-click context menu,
    * ARIA spinbutton semantics, tooltip keybind hints.
    */
+  import { untrack } from "svelte";
   import { Portal } from "bits-ui";
   import { ChevronLeft, ChevronRight } from "lucide-svelte";
   import { setHint, clearHint } from "./stores/status";
@@ -42,7 +43,8 @@
 
   type Mode = "idle" | "scrubbing" | "editing";
   let mode = $state<Mode>("idle");
-  let current = $state(value);
+  // Seed from the initial prop value; the component owns it thereafter.
+  let current = $state(untrack(() => value));
   let editText = $state("");
   let inputEl = $state<HTMLInputElement | undefined>(undefined);
 

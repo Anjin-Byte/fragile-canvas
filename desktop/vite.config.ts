@@ -7,9 +7,9 @@ export default defineConfig({
     open: false,
   },
   optimizeDeps: {
-    exclude: ['@fragile-canvas/ui'],
+    exclude: ['@fragile-canvas/ui', '@gestalt/phi'],
   },
   ssr: {
-    noExternal: ['@fragile-canvas/ui'],
+    noExternal: ['@fragile-canvas/ui', '@gestalt/phi'],
   },
 })

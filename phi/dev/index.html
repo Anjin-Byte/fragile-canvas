@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phi — DockLayout playground</title>
+    <style>
+      /* Minimal slice of Phi's dark token set for the playground. */
+      :root {
+        --text-hi: oklch(0.96 0.003 250);
+        --text-mid: oklch(0.88 0.004 250);
+        --text-lo: oklch(0.75 0.005 250);
+        --text-subtle: oklch(0.55 0.01 250);
+        --text-faint: oklch(0.46 0.01 250);
+        --surface-0: oklch(0.12 0.015 250);
+        --surface-2: oklch(0.16 0.015 250);
+        --surface-3: oklch(0.18 0.015 250);
+        --fill-lo: oklch(1 0 0 / 5%);
+        --fill-mid: oklch(1 0 0 / 8%);
+        --stroke-lo: oklch(1 0 0 / 6%);
+        --stroke-mid: oklch(1 0 0 / 12%);
+        --interactive: oklch(0.8 0.16 250);
+        --interactive-ring: oklch(0.8 0.16 250 / 30%);
+      }
+      * { box-sizing: border-box; }
+      html, body, #app {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        background: var(--surface-2);
+        color: var(--text-mid);
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

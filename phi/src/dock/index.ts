@@ -1,27 +1,60 @@
+// ─── Dock layout system ─────────────────────────────────────────────────────
+// Reactive 2D docking: DockModel ($state tree, fractions as source of
+// truth) + solve() (derived pixel rects) + DockLayout (rendering, sash
+// drags, dnd, keep-alive panels, maximize, persistence).
+
 export { default as DockLayout } from "./DockLayout.svelte";
-export type { DockPanelGroup } from "./DockLayout.svelte";
-export { default as DockGroup }  from "./DockGroup.svelte";
-export { default as DockTabs }   from "./DockTabs.svelte";
+export { default as DockGroup } from "./DockGroup.svelte";
+export { default as DockTabs } from "./DockTabs.svelte";
 export { default as DropOverlay } from "./DropOverlay.svelte";
 
-export { detectZone, zoneToDirection, setDragPayload, getDragPayload, hasPanelDrag, PANEL_DRAG_MIME } from "./dnd";
-export type { DropZonePosition, PanelDragPayload } from "./dnd";
-
-export { Splitview, ViewItem, LayoutPriority } from "./Splitview";
-export type { IView, Orientation, SplitviewOptions } from "./Splitview";
+export {
+  DockModel,
+  DockLeaf,
+  DockBranch,
+  FloatingGroup,
+  directionOrientation,
+} from "./model.svelte.js";
+export type {
+  DockNode,
+  Orientation,
+  Direction,
+  PanelDef,
+  FloatRect,
+  SerializedDock,
+  SerializedNode,
+  SerializedLeaf,
+  SerializedBranch,
+  SerializedFloating,
+} from "./model.svelte.js";
+export type { ResolvedPanelDef } from "./DockTabs.svelte";
 
 export {
-  Gridview,
-  LeafNode,
-  BranchNode,
-  orthogonal,
-} from "./Gridview";
+  solve,
+  distribute,
+  minSize,
+  resizeSash,
+  equalizeAtSash,
+  DEFAULT_SOLVE_OPTIONS,
+  TAB_BAR_HEIGHT,
+} from "./solve.js";
 export type {
-  IGridView,
-  Direction,
-  GridNode,
-  SerializedGridview,
-  SerializedNode,
-  SerializedBranch,
-  SerializedLeaf,
-} from "./Gridview";
+  Rect,
+  LeafLayout,
+  SashLayout,
+  DockSolution,
+  SolveOptions,
+} from "./solve.js";
+
+export {
+  detectZone,
+  zoneToDirection,
+  rectContains,
+  insertionIndex,
+  insertionToReorderIndex,
+  setDragPayload,
+  getDragPayload,
+  hasPanelDrag,
+  PANEL_DRAG_MIME,
+} from "./dnd.js";
+export type { DropZonePosition, PanelDragPayload, RectLike } from "./dnd.js";

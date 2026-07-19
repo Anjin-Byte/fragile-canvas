@@ -1,13 +1,15 @@
 /**
  * Dock DnD — drag-and-drop utilities for panel rearrangement.
  *
- * Zone detection, payload types, and direction mapping for the
- * 5-zone drop target system (center + 4 edges).
+ * Zone detection, payload types, direction mapping for the 5-zone drop
+ * target system (center + 4 edges), and tab-strip insertion indexing.
  *
- * See: reference/dock-implementation-guide.md — DnD Implementation Details
+ * All functions are pure geometry/data helpers; DockLayout owns the event
+ * wiring with a single layout-level hit-test against the solved rects (no
+ * per-group dragenter/dragleave bookkeeping to get out of sync).
  */
 
-import type { Direction } from "./Gridview";
+import type { Direction } from "./model.svelte.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -23,25 +25,27 @@ export interface PanelDragPayload {
 /** MIME type for panel drag data in dataTransfer. */
 export const PANEL_DRAG_MIME = "application/x-phi-panel";
 
+/** The minimal rect shape zone detection needs (DOMRect or solver Rect). */
+export interface RectLike {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 // ─── Zone Detection ─────────────────────────────────────────────────────
 
 /**
- * Detect which drop zone the cursor is in relative to a bounding rect.
+ * Detect which drop zone a point is in relative to a bounding rect.
+ * Point and rect must share a coordinate space.
  *
- * Uses a 20% edge threshold (matching dockview). The cursor must be within
+ * Uses a 20% edge threshold (matching dockview). The point must be within
  * the outer 20% of an edge to trigger that edge zone; otherwise it's "center".
  *
  * Edge priority: left/right checked before top/bottom (horizontal layout bias).
- * This means corners favor horizontal splits, matching the behavior of
- * horizontal-first dock layouts.
- *
- * @param rect - The target element's bounding client rect
- * @param x - Cursor clientX
- * @param y - Cursor clientY
- * @param edgeThreshold - Fraction of dimension for edge zones (default 0.2 = 20%)
  */
 export function detectZone(
-  rect: DOMRect,
+  rect: RectLike,
   x: number,
   y: number,
   edgeThreshold = 0.2,
@@ -49,7 +53,6 @@ export function detectZone(
   const relX = (x - rect.left) / rect.width;
   const relY = (y - rect.top) / rect.height;
 
-  // Check horizontal edges first (left/right priority for horizontal-first layouts)
   if (relX < edgeThreshold) return "left";
   if (relX > 1 - edgeThreshold) return "right";
   if (relY < edgeThreshold) return "top";
@@ -57,10 +60,20 @@ export function detectZone(
   return "center";
 }
 
+/** Whether a point lies inside a rect. */
+export function rectContains(rect: RectLike, x: number, y: number): boolean {
+  return (
+    x >= rect.left &&
+    x < rect.left + rect.width &&
+    y >= rect.top &&
+    y < rect.top + rect.height
+  );
+}
+
 // ─── Direction Mapping ──────────────────────────────────────────────────
 
 /**
- * Map a drop zone position to a Gridview direction for addViewAt().
+ * Map a drop zone position to a split direction.
  * "center" has no direction — it means tabify (add to existing group).
  */
 export function zoneToDirection(zone: DropZonePosition): Direction | null {
@@ -71,6 +84,28 @@ export function zoneToDirection(zone: DropZonePosition): Direction | null {
     case "bottom": return "down";
     case "center": return null;
   }
+}
+
+// ─── Tab-strip insertion ────────────────────────────────────────────────
+
+/**
+ * Given the x-midpoints of the tabs in a strip, the insertion index for a
+ * drop at `x`: the number of midpoints left of the pointer.
+ */
+export function insertionIndex(midpoints: number[], x: number): number {
+  let index = 0;
+  for (const mid of midpoints) {
+    if (x > mid) index++;
+  }
+  return index;
+}
+
+/**
+ * Convert a tab-strip insertion index into the final reorder position for
+ * a panel already in that strip (removal shifts later indices down one).
+ */
+export function insertionToReorderIndex(insertion: number, fromIndex: number): number {
+  return insertion > fromIndex ? insertion - 1 : insertion;
 }
 
 // ─── Payload Helpers ────────────────────────────────────────────────────

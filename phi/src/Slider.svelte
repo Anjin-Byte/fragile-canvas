@@ -10,6 +10,8 @@
    *
    * Uses a native HTML range input. Value shown right-aligned in the header.
    */
+  import { untrack } from "svelte";
+
   let {
     id,
     label,
@@ -30,7 +32,8 @@
     onValueChange: (v: number) => void;
   } = $props();
 
-  let current = $state(value);
+  // Seed from the initial prop value; the component owns it thereafter.
+  let current = $state(untrack(() => value));
 
   function handleInput(e: Event) {
     current = Number((e.currentTarget as HTMLInputElement).value);

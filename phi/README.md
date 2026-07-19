@@ -48,11 +48,10 @@ Opinionated GUI toolkit for building professional tool interfaces. Designed for 
 | Component | What | When to use |
 |-----------|------|------------|
 | **Section** | Collapsible container with localStorage persistence | Grouping related controls in a panel |
-| **DockLayout** | Absolute-positioned dock panel renderer | Application shell — wraps the entire panel grid |
-| **DockGroup** | Tabbed panel container | Multiple panels sharing one dock zone |
-| **DockTabs** | Tab bar with close buttons | Tab navigation within a DockGroup |
-| **Splitview** | 1D resizable split pane | Dividing space between two views |
-| **Gridview** | Recursive tree of alternating-orientation splits | Complex multi-panel layouts |
+| **DockLayout** | Reactive 2D docking container (see below) | Application shell — wraps the entire panel grid |
+| **DockGroup** | Group chrome: tab bar + backdrop | Rendered by DockLayout, one per dock group |
+| **DockTabs** | Tab bar with drag, close, insertion caret | Tab navigation within a DockGroup |
+| **DockModel** | The dock's reactive layout tree (`$state`) | Construct/persist layouts; all structural operations |
 
 ### Complex (interactive data views)
 
@@ -99,6 +98,71 @@ What are you showing?
 +-- Hierarchical data list               --> TreeList
 +-- Right-click actions                   --> ContextMenu
 ```
+
+---
+
+## Dock Layout
+
+The dock system is a reactive rewrite: layout fractions live in `$state` on
+a `DockModel` tree and pixel rects are `$derived` — sash drags and
+structural operations mutate the model, and everything on screen re-derives.
+There is no cached layout to invalidate.
+
+```svelte
+<script lang="ts">
+  import { DockLayout, DockModel, type PanelDef } from "@gestalt/phi";
+
+  const defs: PanelDef[] = [
+    { id: "viewport", title: "Viewport", closable: false, minWidth: 240 },
+    { id: "tree", title: "Scene Tree" },
+  ];
+
+  const model = DockModel.fromStorage("my-app-dock", {
+    type: "branch",
+    orientation: "row",
+    children: [
+      { type: "leaf", id: "side", panels: ["tree", "search"] },
+      { type: "leaf", id: "main", panels: ["viewport"], fraction: 3 },
+    ],
+  });
+</script>
+
+<DockLayout {model} persistKey="my-app-dock" panelDefs={defs}>
+  {#snippet panel(id)}
+    {#if id === "viewport"}<Viewport />{:else}...{/if}
+  {/snippet}
+</DockLayout>
+```
+
+Behavior:
+
+- **Drag a tab** onto a group's edges to split, its center to tabify, a
+  tab strip to insert/reorder at the caret, or a **container edge** to
+  split at the root (full-side leaf). **Alt+drop** floats it at the cursor.
+- **Floating windows**: ⧉ floats a whole group above the dock (drag the
+  strip to move, corner grip to resize, ⇱ docks it back). Drag tabs
+  between floats and the dock freely.
+- **Sashes** resize with min-size cascade (VS Code-style); double-click a
+  sash to equalize its neighbours; double-click a tab bar to
+  maximize/restore a group.
+- **Keep-alive panels**: every panel stays mounted (hidden, not destroyed)
+  across tab switches, moves between groups, and floating — scroll
+  positions, inputs, and component state survive.
+- **Panel registry** (`panelDefs`): tab titles, per-tab close visibility,
+  per-panel minimum sizes. An overflow menu (») appears when a strip
+  scrolls.
+- **Keyboard** (focus inside the dock): `Alt+W` close active tab,
+  `Alt+[` / `Alt+]` cycle tabs, `Alt+Enter` maximize toggle.
+- **Persistence**: `persistKey` saves the layout — including floating
+  windows and the active group — (debounced) to localStorage; restore
+  with `DockModel.fromStorage(key, fallbackSpec)`.
+- **Model operations** for programmatic control: `openPanel(id, { near,
+  direction })`, `closePanelById`, `splitLeaf`, `splitRoot`, `movePanel`,
+  `reorderPanel`, `floatLeaf`/`floatPanel`/`unfloatLeaf`, `maximizeLeaf`,
+  `serialize`, ...
+
+An empty dock renders the `empty` snippet (or a default hint) and accepts
+drops anywhere. Run the playground to try it all: `npm run dev` in `phi/`.
 
 ---
 

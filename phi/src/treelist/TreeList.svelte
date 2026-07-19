@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { TreeListDomain, DropZone } from "./types";
   import type { ContextMenuItem } from "../ContextMenu.svelte";
   import { TreeListStateStore } from "./types";
@@ -28,8 +28,8 @@
 
   // ─── State ─────────────────────────────────────────────────────────────
 
-  // Capture domainId at init to avoid Svelte's "only captures initial value" warning.
-  const domainId = domain.domainId;
+  // Capture domainId once at init (the domain prop is static per instance).
+  const domainId = untrack(() => domain.domainId);
   const stateStore = new TreeListStateStore(domainId);
 
   // Reactive version counter — incremented whenever stateStore mutates,
