@@ -38,6 +38,14 @@ struct BundledRom {
     author: String,
 }
 
+#[derive(Serialize)]
+struct DisasmLine {
+    addr: u16,
+    bytes: String,
+    text: String,
+    len: u8,
+}
+
 fn to_js(snap: CpuSnapshot) -> Result<JsValue, JsValue> {
     let state: CpuState = snap.into();
     serde_wasm_bindgen::to_value(&state).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -120,6 +128,41 @@ impl EmulatorWasm {
         let data = self.session.read_memory(addr, length)
             .map_err(|e| JsValue::from_str(e))?;
         serde_wasm_bindgen::to_value(&data).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Disassemble `count` instructions starting at `addr`, reading through
+    /// the bus. Returns an array of { addr, bytes, text, len } objects.
+    #[wasm_bindgen(js_name = disassemble)]
+    pub fn disassemble(&self, addr: u16, count: u16) -> Result<JsValue, JsValue> {
+        let mut lines: Vec<DisasmLine> = Vec::with_capacity(count as usize);
+        let mut cur = addr as u32;
+
+        for _ in 0..count {
+            if cur > 0xFFFF {
+                break;
+            }
+            let avail = (0x10000 - cur).min(3) as u16;
+            let bytes = self
+                .session
+                .read_memory(cur as u16, avail)
+                .map_err(|e| JsValue::from_str(e))?;
+            let Some(decoded) = sm83_isa::decode(&bytes) else { break };
+
+            let opts = sm83_isa::FormatOptions { addr: Some(cur as u16), symbols: None };
+            let raw: Vec<String> = bytes[..decoded.len as usize]
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect();
+            lines.push(DisasmLine {
+                addr: cur as u16,
+                bytes: raw.join(" "),
+                text: sm83_isa::format_instruction(&decoded.instr, &opts),
+                len: decoded.len,
+            });
+            cur += decoded.len as u32;
+        }
+
+        serde_wasm_bindgen::to_value(&lines).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen(js_name = tickFrame)]

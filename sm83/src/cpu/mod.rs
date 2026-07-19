@@ -68,12 +68,25 @@ impl CPU {
         }
     }
 
-    /// Execute one full instruction and return the number of T-cycles consumed.
+    /// Execute one full instruction at once and return a T-cycle count
+    /// from the `T_CYCLES`/`TAKEN_T_CYCLES` lookup tables.
     ///
-    /// On a real SM83, fetch + decode happens in 1 M-cycle, and every
-    /// additional memory access or internal operation is 1 more M-cycle.
-    /// We execute all micro-ops at once and use the lookup table for the
-    /// authoritative cycle count.
+    /// LEGACY PATH — not used by real emulation. The production timing
+    /// source is the M-cycle dispatch pipeline: `GameBoy::tick()` drives
+    /// [`CPU::step_m`] one M-cycle at a time and accumulates 4 T-cycles per
+    /// M-cycle actually executed. Every runtime entry point (`Session`,
+    /// the wasm/desktop backends) goes through that path, which counts real
+    /// bus M-cycles and is correct against Pandocs (verified: JP=16,
+    /// CALL=24, RST=16, conditional taken/not-taken all match).
+    ///
+    /// This monolithic `tick()` is retained only because older unit tests
+    /// in this module and `microcode.rs` still call it. Its cycle numbers
+    /// come from the lookup tables, whose base `T_CYCLES` values are wrong
+    /// for unconditional control flow (JP $C3=12 vs 16, CALL $CD=12 vs 24,
+    /// RET $C9=8 vs 16, RST=32 vs 16) — harmless because they never reach
+    /// the live path, but it means this function and those tables should be
+    /// migrated onto `step_m` or removed. See the `T_CYCLES` note in
+    /// `decoder.rs`.
     pub fn tick(&mut self, bus: &mut Bus) -> u8 {
         // 1. Check for pending interrupts (runs before instruction fetch).
         //    An interrupt wakes the CPU from HALT regardless of IME.

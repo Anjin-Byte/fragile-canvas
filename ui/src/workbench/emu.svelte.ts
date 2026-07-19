@@ -5,7 +5,7 @@
 // manual step, so panels can $effect on it (throttled while running,
 // immediate when stepping/paused).
 
-import type { CpuState, EmulatorBackend, BundledRomInfo } from "../types";
+import type { CpuState, DisasmLine, EmulatorBackend, BundledRomInfo } from "../types";
 
 /** M-cycles per DMG frame (70224 T-cycles / 4). */
 export const MCYCLES_PER_FRAME = 17556;
@@ -29,6 +29,9 @@ export class EmuController {
   #screenBlit: ((shades: Uint8Array) => void) | null = null;
   #actionBits = 0;
   #dpadBits = 0;
+  /** Last ROM source, kept so reset() can re-load (the web backend's
+   *  reset() tears the machine down entirely). */
+  #lastRom: { kind: "bytes"; data: ArrayBuffer } | { kind: "bundled"; id: string } | null = null;
 
   constructor(backend: EmulatorBackend) {
     this.backend = backend;
@@ -55,10 +58,12 @@ export class EmuController {
   // ─── ROM loading ──────────────────────────────────────────────────────
 
   async loadRomBytes(data: ArrayBuffer): Promise<void> {
+    this.#lastRom = { kind: "bytes", data };
     await this.#load(() => this.backend.loadRom(new Uint8Array(data)));
   }
 
   async loadBundled(id: string): Promise<void> {
+    this.#lastRom = { kind: "bundled", id };
     await this.#load(() => this.backend.loadBundledRom(id));
   }
 
@@ -148,16 +153,18 @@ export class EmuController {
     await this.stepCycles(MCYCLES_PER_FRAME);
   }
 
+  /** Reset = re-load the last ROM (the backend's reset() is a teardown). */
   async reset(): Promise<void> {
-    if (!this.romLoaded) return;
-    const wasRunning = this.running;
+    if (!this.romLoaded || !this.#lastRom) return;
     this.pause();
     try {
       await this.backend.reset();
-      this.cpu = await this.backend.getState();
-      this.frameCount++;
-      await this.#drawFrame();
-      if (wasRunning) this.start();
+      const last = this.#lastRom;
+      if (last.kind === "bytes") {
+        await this.#load(() => this.backend.loadRom(new Uint8Array(last.data)));
+      } else {
+        await this.#load(() => this.backend.loadBundledRom(last.id));
+      }
     } catch (e) {
       this.error = String(e);
     }
@@ -168,6 +175,17 @@ export class EmuController {
   /** Bus read passthrough for inspector panels. */
   read(addr: number, length: number): Promise<number[]> {
     return this.backend.readMemory(addr, length);
+  }
+
+  /** Whether the backend can disassemble (needs the sm83-isa export). */
+  get canDisasm(): boolean {
+    return typeof this.backend.disassemble === "function";
+  }
+
+  /** Disassemble `count` instructions from `addr`; [] when unsupported. */
+  async disasm(addr: number, count: number): Promise<DisasmLine[]> {
+    if (!this.backend.disassemble || !this.romLoaded) return [];
+    return this.backend.disassemble(addr, count);
   }
 
   // ─── Joypad ───────────────────────────────────────────────────────────

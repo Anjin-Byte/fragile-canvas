@@ -1,4 +1,4 @@
-import type { CpuState, EmulatorBackend, BundledRomInfo } from "@fragile-canvas/ui";
+import type { CpuState, DisasmLine, EmulatorBackend, BundledRomInfo } from "@fragile-canvas/ui";
 import init, { EmulatorWasm } from "../../wasm/pkg/fragile_canvas_wasm";
 import { AudioManager } from "./audio";
 
@@ -113,5 +113,12 @@ export const wasmBackend: EmulatorBackend = {
     if (!emu) return null;
     const data = emu.getFrame();
     return data ? new Uint8Array(data) : null;
+  },
+
+  async disassemble(addr: number, count: number): Promise<DisasmLine[]> {
+    if (!emu) throw new Error("no ROM loaded");
+    // Available after a WASM rebuild; feature-detect like loadBundledRom.
+    if (typeof (emu as any).disassemble !== "function") return [];
+    return (emu as any).disassemble(addr, count) as DisasmLine[];
   },
 };

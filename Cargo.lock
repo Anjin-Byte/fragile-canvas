@@ -980,6 +980,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "sm83",
+ "sm83-isa",
  "wasm-bindgen",
 ]
 
@@ -3352,6 +3353,13 @@ dependencies = [
  "arrayvec",
  "indicatif",
  "rand 0.8.5",
+]
+
+[[package]]
+name = "sm83-isa"
+version = "0.1.0"
+dependencies = [
+ "sm83",
 ]
 
 [[package]]

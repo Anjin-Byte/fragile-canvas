@@ -16,6 +16,15 @@ export interface BundledRomInfo {
   author: string;
 }
 
+export interface DisasmLine {
+  addr: number;
+  /** Raw bytes as spaced hex, e.g. "CD 61 01". */
+  bytes: string;
+  /** Formatted instruction, e.g. "CALL $0161". */
+  text: string;
+  len: number;
+}
+
 export interface EmulatorBackend {
   loadRom(cartRom: Uint8Array): Promise<CpuState>;
   /** Load a ROM skipping the boot ROM (starts at PC=0x0100). */
@@ -36,4 +45,8 @@ export interface EmulatorBackend {
   /** Drain the latest completed PPU frame. Returns 160×144 shade indices (0-3)
    *  or null if no new frame is ready. */
   getFrame(): Promise<Uint8Array | null>;
+  /** Disassemble `count` instructions starting at `addr`. Optional —
+   *  backends without the sm83-isa export omit it and the DisasmPanel
+   *  falls back to its placeholder. */
+  disassemble?(addr: number, count: number): Promise<DisasmLine[]>;
 }

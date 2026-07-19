@@ -71,6 +71,23 @@ fn cond_from_bits(bits: u8) -> Condition {
     }
 }
 
+// ─── Legacy cycle tables ─────────────────────────────────────────────────
+//
+// These per-opcode T-cycle tables feed the monolithic [`CPU::tick`], which
+// is a LEGACY execution path retained only for older unit tests. Real
+// emulation counts cycles in the M-cycle dispatch pipeline (`CPU::step_m`
+// via `GameBoy::tick`), 4 T per M-cycle actually executed — that path is
+// the authoritative timing source and is correct against Pandocs.
+//
+// KNOWN DISCREPANCY: the base `T_CYCLES` values below are wrong for
+// unconditional control flow — JP $C3 = 12 (should be 16), CALL $CD = 12
+// (24), RET $C9 = 8 (16), RST = 32 (16). `TAKEN_T_CYCLES` patches the
+// *conditional* branches to their taken values but does NOT correct these
+// unconditional ones. Because nothing on the live path reads these tables
+// the errors don't affect emulation accuracy, but any cycle assertion in
+// the legacy tests for those opcodes is untrustworthy. Correct or delete
+// this whole cluster (tables + `CPU::tick`) once the legacy tests move to
+// `step_m`.
 const T_CYCLES: [u8; 256] = [
     // x0  x1  x2  x3  x4  x5  x6  x7  x8  x9  xA  xB  xC  xD  xE  xF
         4, 12,  8,  8,  4,  4,  8,  4, 20,  8,  8,  8,  4,  4,  8,  4,  // 0x

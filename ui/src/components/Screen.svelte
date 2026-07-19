@@ -1,5 +1,9 @@
 <script lang="ts">
-  import substrateNormalUrl from "./substrate_normal.png";
+  // Pre-baked substrate grain: 8-bit grayscale, computed from the original
+  // 16-bit normal map by the exact browser pipeline this component used to
+  // run at load time (see tools/lcd-regression/). Byte-identical samples,
+  // ~6x smaller file, no main-thread conversion loop, 1/4 the VRAM.
+  import substrateGrainUrl from "./substrate_grain.png";
 
   const SCREEN_W = 160;
   const SCREEN_H = 144;
@@ -12,6 +16,30 @@
     [0x0E / 255, 0x45 / 255, 0x0B / 255],  // #0E450B shade 2
     [0x1B / 255, 0x2A / 255, 0x09 / 255],  // #1B2A09 shade 3 — darkest
   ];
+
+  // ── CPU-side OKLAB (same truncated constants as the shader) ──
+  // The palette's OKLAB values and the gap-blend bases are constants of
+  // the palette, so they're computed once here (in double precision) and
+  // uploaded as uniforms instead of being re-derived per fragment.
+  function toOklab(rgb: number[]): number[] {
+    const [r, g, b] = rgb.map((v) => Math.pow(v, 2.2));
+    const l = Math.cbrt(Math.max(0.4122 * r + 0.5363 * g + 0.0514 * b, 0));
+    const m = Math.cbrt(Math.max(0.2119 * r + 0.6806 * g + 0.1075 * b, 0));
+    const s = Math.cbrt(Math.max(0.0883 * r + 0.2817 * g + 0.63 * b, 0));
+    return [
+      0.2105 * l + 0.7937 * m - 0.0041 * s,
+      1.978 * l - 2.4286 * m + 0.4506 * s,
+      0.0259 * l + 0.7827 * m - 0.8086 * s,
+    ];
+  }
+
+  const PALETTE_LAB = DMG_PALETTE.map(toOklab);
+  // Gap color = mix(mix(labSelf, labNeighbor, 0.3), labShade0, 0.35),
+  // expanded to labSelf*0.455 + (labNeighbor*0.195 + labShade0*0.35).
+  // The parenthesized part depends only on the neighbor's palette index.
+  const GAP_BASE = PALETTE_LAB.map((lab) =>
+    lab.map((v, i) => v * 0.195 + PALETTE_LAB[0][i] * 0.35),
+  );
 
   // ── Shader sources ──
 
@@ -31,6 +59,15 @@
   // Grid: gl_FragCoord-aligned per-edge gaps (no moiré).
   // Blending: gaps between different-shade pixels interpolated in OKLAB
   // for perceptually uniform transitions across the STN hue shift.
+  //
+  // Performance restructure (output verified byte-equivalent, ≤1 LSB, by
+  // tools/lcd-regression/harness.html): all forward sRGB→OKLAB conversions
+  // are palette constants and arrive precomputed in u_paletteLab/u_gapBase;
+  // the gap-color math runs only for fragments inside a gap. Per-fragment
+  // transcendental work drops from ~57 pow() calls to 3 (interior) / 15
+  // (gap). The gap formula mix(mix(self, n, .3), s0, .35) is expanded to
+  // self*0.455 + (n*0.195 + s0*0.35) with the parenthesized part baked
+  // into u_gapBase per palette index.
   const FRAG_SRC = `#version 300 es
     precision highp float;
 
@@ -41,26 +78,13 @@
     uniform sampler2D u_overlay;
     uniform vec2 u_resolution;
     uniform vec3 u_palette[4];
+    uniform vec3 u_paletteLab[4]; // OKLAB of each palette entry (CPU-computed)
+    uniform vec3 u_gapBase[4];    // paletteLab[n]*0.195 + paletteLab[0]*0.35
     uniform float u_gridIntensity; // 0 = flat palette, 1 = full LCD model
     uniform float u_overlayIntensity; // 0 = no overlay, 1 = full scratch effect
 
-    // ── OKLAB color space conversion ──
-    // Perceptually uniform blending for gap colors between shades
-    // that shift in hue (yellow-green → cool green on real STN LCD).
-
-    vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }
+    // ── OKLAB → sRGB (the only conversion left per fragment) ──
     vec3 linearToSrgb(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0/2.2)); }
-
-    vec3 linearToOklab(vec3 c) {
-      float l = pow(max(0.4122*c.r + 0.5363*c.g + 0.0514*c.b, 0.0), 1.0/3.0);
-      float m = pow(max(0.2119*c.r + 0.6806*c.g + 0.1075*c.b, 0.0), 1.0/3.0);
-      float s = pow(max(0.0883*c.r + 0.2817*c.g + 0.6300*c.b, 0.0), 1.0/3.0);
-      return vec3(
-        0.2105*l + 0.7937*m - 0.0041*s,
-        1.9780*l - 2.4286*m + 0.4506*s,
-        0.0259*l + 0.7827*m - 0.8086*s
-      );
-    }
 
     vec3 oklabToLinear(vec3 lab) {
       float l = lab.x + 0.3963*lab.y + 0.2159*lab.z;
@@ -73,24 +97,31 @@
       );
     }
 
-    vec3 toOklab(vec3 srgb) { return linearToOklab(srgbToLinear(srgb)); }
     vec3 fromOklab(vec3 lab) { return linearToSrgb(oklabToLinear(lab)); }
+
+    // Neighbor shade lookup with CLAMP_TO_EDGE semantics. texelFetch keeps
+    // the sampling well-defined inside non-uniform control flow.
+    int shadeAt(ivec2 p) {
+      ivec2 q = clamp(p, ivec2(0), ivec2(${SCREEN_W - 1}, ${SCREEN_H - 1}));
+      float s = texelFetch(u_game, q, 0).r;
+      return clamp(int(s * 255.0 + 0.5), 0, 3);
+    }
 
     void main() {
       // ── Game data → palette color ──
       float shadeRaw = texture(u_game, v_uv).r;
       int shade = clamp(int(shadeRaw * 255.0 + 0.5), 0, 3);
-      vec3 pixelColor = u_palette[shade];
+      vec3 flatColor = u_palette[shade];
 
       // ── Per-pixel variation: perturb lightness in OKLAB ──
       // Simulates the fine matte grain of the DMG front polarizer.
-      // The overlay is a scalar grain texture derived from a normal map,
-      // tiled across the screen at a density that reads as surface texture.
+      // The overlay is a pre-baked scalar grain texture (from the DMG
+      // substrate normal map), tiled across the screen at a density that
+      // reads as surface texture.
       float grain = texture(u_overlay, v_uv * 12.0).r; // tiled 12x across screen
-      float variation = grain - 0.5; // centered around 0
-      vec3 labPixel = toOklab(pixelColor);
-      labPixel.x += variation * u_overlayIntensity;
-      pixelColor = fromOklab(labPixel);
+      vec3 labPixel = u_paletteLab[shade];
+      labPixel.x += (grain - 0.5) * u_overlayIntensity;
+      vec3 pixelColor = fromOklab(labPixel);
 
       // ── Grid: aligned to screen pixels (no moiré) ──
       float dotW = u_resolution.x / float(${SCREEN_W});
@@ -110,58 +141,35 @@
       float edgeB = smoothstep(0.0, gapNormY + softNorm, cellY);
       float edgeT = smoothstep(0.0, gapNormY + softNorm, 1.0 - cellY);
 
-      float inSegment = edgeL * edgeR * edgeT * edgeB;
-
-      // ── Per-edge neighbor colors (OKLAB blending) ──
-      vec2 texelSize = vec2(1.0 / float(${SCREEN_W}), 1.0 / float(${SCREEN_H}));
-
-      float sL = texture(u_game, v_uv + vec2(-texelSize.x, 0.0)).r;
-      float sR = texture(u_game, v_uv + vec2( texelSize.x, 0.0)).r;
-      float sT = texture(u_game, v_uv + vec2(0.0, -texelSize.y)).r;
-      float sB = texture(u_game, v_uv + vec2(0.0,  texelSize.y)).r;
-
-      // Look up each neighbor's palette color
-      vec3 cL = u_palette[clamp(int(sL * 255.0 + 0.5), 0, 3)];
-      vec3 cR = u_palette[clamp(int(sR * 255.0 + 0.5), 0, 3)];
-      vec3 cT = u_palette[clamp(int(sT * 255.0 + 0.5), 0, 3)];
-      vec3 cB = u_palette[clamp(int(sB * 255.0 + 0.5), 0, 3)];
-
-      // Gap color: blend the average of (self + neighbor) toward shade 0
-      // in OKLAB. Shade 0 acts as the "reflector" — the base color the
-      // LCD shows between segments. This ensures gaps are always visually
-      // distinct from segment interiors, even between same-shade pixels.
-      vec3 labShade0 = toOklab(u_palette[0]);
-      vec3 labSelf = toOklab(pixelColor);
-      float neighborAmt = 0.3;  // how much the neighbor influences the gap
-      float liftAmt = 0.35;     // how much the gap lifts toward shade 0
-
-      vec3 gapL = fromOklab(mix(mix(labSelf, toOklab(cL), neighborAmt), labShade0, liftAmt));
-      vec3 gapR = fromOklab(mix(mix(labSelf, toOklab(cR), neighborAmt), labShade0, liftAmt));
-      vec3 gapT = fromOklab(mix(mix(labSelf, toOklab(cT), neighborAmt), labShade0, liftAmt));
-      vec3 gapB = fromOklab(mix(mix(labSelf, toOklab(cB), neighborAmt), labShade0, liftAmt));
-
-      // ── Composite: per-edge gap blending (parallel, not sequential) ──
-      // Each edge contributes independently from pixelColor to avoid
-      // cross-axis contamination where left/right mixes would bleed
-      // into top/bottom results.
       float gapL_w = 1.0 - edgeL;  // weight: how much we're in the left gap
       float gapR_w = 1.0 - edgeR;
       float gapT_w = 1.0 - edgeT;
       float gapB_w = 1.0 - edgeB;
       float totalGap = gapL_w + gapR_w + gapT_w + gapB_w;
 
-      // Weighted average of all gap contributions, blended with pixel center
       vec3 lcdColor;
       if (totalGap < 0.001) {
-        // Fully inside segment — no gap influence
+        // Fully inside segment — no gap influence, skip all gap math.
         lcdColor = pixelColor;
       } else {
+        // ── Gap colors: blend self toward neighbor and "reflector" ──
+        // Shade 0 acts as the reflector — the base color the LCD shows
+        // between segments — so gaps stay visually distinct even between
+        // same-shade pixels. Each edge contributes independently from
+        // pixelColor to avoid cross-axis contamination.
+        ivec2 texel = ivec2(floor(v_uv * vec2(float(${SCREEN_W}), float(${SCREEN_H}))));
+        vec3 selfPart = labPixel * 0.455;
+        vec3 gapL = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(-1, 0))]);
+        vec3 gapR = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2( 1, 0))]);
+        vec3 gapT = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(0, -1))]);
+        vec3 gapB = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(0,  1))]);
+
+        // Weighted average of all gap contributions, blended with center
         vec3 gapBlend = (gapL * gapL_w + gapR * gapR_w + gapT * gapT_w + gapB * gapB_w) / totalGap;
         lcdColor = mix(pixelColor, gapBlend, min(totalGap, 1.0));
       }
 
       // ── Blend with flat palette mode ──
-      vec3 flatColor = u_palette[shade];
       vec3 color = mix(flatColor, lcdColor, u_gridIntensity);
 
       fragColor = vec4(color, 1.0);
@@ -267,7 +275,7 @@
     texData.fill(3); // shade 3 = darkest
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, SCREEN_W, SCREEN_H, 0, gl.RED, gl.UNSIGNED_BYTE, texData);
 
-    // Overlay texture — substrate grain (from normal map)
+    // Overlay texture — pre-baked substrate grain, single channel (R8).
     overlayTexture = gl.createTexture()!;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
@@ -276,41 +284,23 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
 
-    // Upload a 1x1 neutral placeholder until the image loads
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    // 1x1 placeholder until the image loads (0 = same pre-load look as the
+    // old black RGBA placeholder's red channel).
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
 
     const overlayImg = new Image();
     overlayImg.onload = () => {
       if (!gl || !overlayTexture) return;
-
-      // Convert normal map to scalar grain texture.
-      // R,G channels encode tangent-space surface slope; we compute
-      // the deviation magnitude from flat (0.5, 0.5) as a scalar.
-      const tmp = document.createElement("canvas");
-      tmp.width = overlayImg.width;
-      tmp.height = overlayImg.height;
-      const ctx = tmp.getContext("2d")!;
-      ctx.drawImage(overlayImg, 0, 0);
-      const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
-      const px = imgData.data;
-      for (let i = 0; i < px.length; i += 4) {
-        const dx = px[i] / 255 - 0.5;     // R → X slope
-        const dy = px[i + 1] / 255 - 0.5; // G → Y slope
-        const mag = Math.sqrt(dx * dx + dy * dy) * 2; // normalize: max ~0.707 → ~1.41, *2 fills range
-        const v = Math.min(mag * 255, 255);
-        px[i] = v;       // bake scalar into R
-        px[i + 1] = v;   // G (unused but consistent)
-        px[i + 2] = v;   // B (unused but consistent)
-        // alpha stays 255
-      }
-      ctx.putImageData(imgData, 0, 0);
-
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tmp);
+      // Upload decoded bytes as-is: no browser colorspace transform, and
+      // the grayscale PNG's gray value lands in the red channel.
+      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, overlayImg);
       render();
     };
-    overlayImg.src = substrateNormalUrl;
+    overlayImg.src = substrateGrainUrl;
 
     // Get uniform locations
     u_game = gl.getUniformLocation(program, "u_game");
@@ -327,14 +317,20 @@
     gl.uniform1f(u_gridIntensity, 1.0); // full LCD grid
     gl.uniform1f(u_overlayIntensity, 0.03); // subtle worn surface
 
-    // Upload palette
+    // Upload palette (sRGB, OKLAB, and precomputed gap bases)
     const paletteFlat = new Float32Array(12);
+    const paletteLabFlat = new Float32Array(12);
+    const gapBaseFlat = new Float32Array(12);
     for (let i = 0; i < 4; i++) {
-      paletteFlat[i * 3 + 0] = DMG_PALETTE[i][0];
-      paletteFlat[i * 3 + 1] = DMG_PALETTE[i][1];
-      paletteFlat[i * 3 + 2] = DMG_PALETTE[i][2];
+      for (let c = 0; c < 3; c++) {
+        paletteFlat[i * 3 + c] = DMG_PALETTE[i][c];
+        paletteLabFlat[i * 3 + c] = PALETTE_LAB[i][c];
+        gapBaseFlat[i * 3 + c] = GAP_BASE[i][c];
+      }
     }
     gl.uniform3fv(u_palette, paletteFlat);
+    gl.uniform3fv(gl.getUniformLocation(program, "u_paletteLab"), paletteLabFlat);
+    gl.uniform3fv(gl.getUniformLocation(program, "u_gapBase"), gapBaseFlat);
 
     // Initial render
     gl.viewport(0, 0, el.width, el.height);
@@ -381,6 +377,18 @@
         ro.disconnect();
         // Clean up DPR listener — remove from current mql
         dprMql?.removeEventListener("change", resize);
+        // Release GL resources; the context itself is freed eagerly
+        // rather than waiting on canvas GC.
+        if (gl) {
+          if (program) gl.deleteProgram(program);
+          if (gameTexture) gl.deleteTexture(gameTexture);
+          if (overlayTexture) gl.deleteTexture(overlayTexture);
+          gl.getExtension("WEBGL_lose_context")?.loseContext();
+        }
+        gl = null;
+        program = null;
+        gameTexture = null;
+        overlayTexture = null;
       },
     };
   }

@@ -1,9 +1,23 @@
-/target
+# Rust build output (any crate: sm83, cli, wasm, desktop/src-tauri)
+target/
+
+# Logs
 /logs
 *.log
+
+# OS / editor junk
 .DS_Store
+
+# Local-only assets and scratch
 /assets
-node_modules
-wasm/pkg
+/docs
 notes.txt
 gameboy_ref/*
+
+# Node / Vite
+node_modules
+.vite/
+dist/
+
+# Generated wasm-pack output
+wasm/pkg

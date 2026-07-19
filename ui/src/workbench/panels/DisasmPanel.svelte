@@ -1,47 +1,96 @@
 <script lang="ts">
   /**
-   * Disassembly panel blockout (spec §3). Structure only: gutter (future
-   * breakpoint dots), address, raw bytes, mnemonic, comment. Live rows
-   * need a decoder in sm83 (no disassembler exists yet) — the current PC
-   * row is highlighted against real CPU state to prove the wiring.
+   * Disassembly panel (spec §3) — live instruction stream from the
+   * sm83-isa decoder via the backend's `disassemble` export. Follows PC
+   * while running/stepping; the follow lock can be released by entering
+   * an address, and re-engaged with the ⌖ button.
+   *
+   * Gutter (future breakpoint dots) / address / raw bytes / mnemonic.
+   * Falls back to a placeholder note on backends without the export.
    */
+  import type { DisasmLine } from "../../types";
   import { hex16, type EmuController } from "../emu.svelte.js";
 
   let { emu }: { emu: EmuController } = $props();
 
-  // Static sample rows (DMG cartridge entry sequence) purely for layout.
-  const SAMPLE = [
-    { addr: 0x0100, raw: "00", mnemonic: "NOP", comment: "" },
-    { addr: 0x0101, raw: "C3 50 01", mnemonic: "JP $0150", comment: "" },
-    { addr: 0x0150, raw: "F3", mnemonic: "DI", comment: "" },
-    { addr: 0x0151, raw: "3E 01", mnemonic: "LD A, $01", comment: "" },
-    { addr: 0x0153, raw: "E0 FF", mnemonic: "LDH ($FF), A", comment: "IE = $01" },
-    { addr: 0x0155, raw: "31 FE FF", mnemonic: "LD SP, $FFFE", comment: "" },
-    { addr: 0x0158, raw: "CD 00 20", mnemonic: "CALL $2000", comment: "" },
-    { addr: 0x015b, raw: "18 FE", mnemonic: "JR -2", comment: "spin" },
-  ];
+  const WINDOW = 32;
 
-  const pc = $derived(emu.cpu?.pc ?? null);
+  let lines = $state<DisasmLine[]>([]);
+  let follow = $state(true);
+  let addrInput = $state("");
+  let viewAddr = $state(0);
+
+  async function refresh(base: number) {
+    lines = await emu.disasm(base, WINDOW);
+  }
+
+  // Heartbeat: follow PC (~10 Hz while running, immediate on step/pause).
+  $effect(() => {
+    const f = emu.frameCount;
+    if (!emu.romLoaded || !emu.canDisasm) return;
+    if (emu.running && f % 6 !== 0) return;
+    const base = follow ? (emu.cpu?.pc ?? 0) : viewAddr;
+    void refresh(base);
+  });
+
+  function onAddrSubmit(e: Event) {
+    e.preventDefault();
+    const parsed = parseInt(addrInput.replace(/^0x/i, "").replace(/^\$/, ""), 16);
+    if (!Number.isNaN(parsed)) {
+      follow = false;
+      viewAddr = parsed & 0xffff;
+      void refresh(viewAddr);
+    }
+  }
+
+  function refollow() {
+    follow = true;
+    addrInput = "";
+    void refresh(emu.cpu?.pc ?? 0);
+  }
 </script>
 
 <div class="disasm-panel">
-  <div class="disasm-rows">
-    {#each SAMPLE as row (row.addr)}
-      <div class="disasm-row" class:current={pc === row.addr}>
-        <span class="disasm-gutter"></span>
-        <span class="disasm-addr">{hex16(row.addr)}</span>
-        <span class="disasm-raw">{row.raw}</span>
-        <span class="disasm-mnemonic">{row.mnemonic}</span>
-        {#if row.comment}
-          <span class="disasm-comment">; {row.comment}</span>
-        {/if}
-      </div>
-    {/each}
-  </div>
-  <div class="disasm-note">
-    Sample rows — live decoding needs an sm83 disassembler (planned).
-    {#if pc !== null}<br />PC is currently {hex16(pc)}.{/if}
-  </div>
+  {#if emu.canDisasm}
+    <div class="disasm-controls">
+      <form class="disasm-addr" onsubmit={onAddrSubmit}>
+        <span class="disasm-addr-prefix">$</span>
+        <input
+          class="disasm-addr-input"
+          bind:value={addrInput}
+          placeholder={emu.cpu ? hex16(emu.cpu.pc) : "0000"}
+          spellcheck="false"
+          aria-label="Go to address"
+        />
+      </form>
+      <button
+        class="disasm-follow"
+        class:active={follow}
+        title={follow ? "Following PC" : "Follow PC"}
+        onclick={refollow}
+      >⌖ PC</button>
+    </div>
+
+    <div class="disasm-rows">
+      {#if lines.length > 0}
+        {#each lines as row (row.addr)}
+          <div class="disasm-row" class:current={emu.cpu?.pc === row.addr}>
+            <span class="disasm-gutter"></span>
+            <span class="disasm-addr-col">{hex16(row.addr)}</span>
+            <span class="disasm-raw">{row.bytes}</span>
+            <span class="disasm-mnemonic">{row.text}</span>
+          </div>
+        {/each}
+      {:else}
+        <div class="empty-hint">Load a ROM to disassemble</div>
+      {/if}
+    </div>
+  {:else}
+    <div class="empty-hint">
+      Disassembly needs a backend with the sm83-isa export
+      (rebuild the WASM package).
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -52,11 +101,69 @@
     min-height: 0;
   }
 
+  .disasm-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--stroke-lo);
+  }
+
+  .disasm-addr {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 6px;
+    background: var(--fill-lo);
+    border: 1px solid var(--stroke-mid);
+    border-radius: var(--radius-sm);
+  }
+
+  .disasm-addr-prefix {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  .disasm-addr-input {
+    width: 44px;
+    padding: 3px 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-hi);
+    background: none;
+    border: none;
+    outline: none;
+    text-transform: uppercase;
+  }
+
+  .disasm-follow {
+    padding: 3px 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-subtle);
+    background: none;
+    border: 1px solid var(--stroke-mid);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color 0.1s ease, border-color 0.1s ease;
+  }
+
+  .disasm-follow:hover {
+    color: var(--text-mid);
+  }
+
+  .disasm-follow.active {
+    color: var(--interactive);
+    border-color: var(--interactive-ring);
+    background: var(--interactive-fill);
+  }
+
   .disasm-rows {
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 6px 0;
+    padding: 4px 0;
     font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1.7;
@@ -81,28 +188,25 @@
     /* future breakpoint dot target */
   }
 
-  .disasm-addr {
+  .disasm-addr-col {
     color: var(--text-subtle);
   }
 
   .disasm-raw {
     color: var(--text-faint);
-    width: 64px;
+    width: 66px;
+    overflow: hidden;
   }
 
   .disasm-mnemonic {
     color: var(--text-mid);
   }
 
-  .disasm-comment {
-    color: var(--text-faint);
-  }
-
-  .disasm-note {
-    padding: 8px;
+  .empty-hint {
+    padding: 16px 8px;
     font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-faint);
-    border-top: 1px solid var(--stroke-lo);
+    text-align: center;
   }
 </style>

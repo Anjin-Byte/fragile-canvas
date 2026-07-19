@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sm83 = { path = "../sm83" }
+sm83-isa = { path = "../sm83-isa" }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"

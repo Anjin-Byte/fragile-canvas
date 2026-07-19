@@ -1,0 +1,19 @@
+[package]
+name = "sm83-isa"
+version = "0.1.0"
+edition = "2021"
+description = "SM83 (Game Boy CPU) instruction set: disassembler, assembler, and instruction metadata"
+
+# Zero runtime dependencies — the crate is consumed by the wasm build, so it
+# stays lean. The emulator is a dev-dependency only, used as a test oracle.
+
+[dev-dependencies]
+sm83 = { path = "../sm83" }
+
+[[bin]]
+name = "sm83-disasm"
+path = "src/bin/sm83-disasm.rs"
+
+[[bin]]
+name = "sm83-asm"
+path = "src/bin/sm83-asm.rs"
