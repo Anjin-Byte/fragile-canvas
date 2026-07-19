@@ -5,7 +5,10 @@
 // manual step, so panels can $effect on it (throttled while running,
 // immediate when stepping/paused).
 
+import { SvelteSet } from "svelte/reactivity";
 import type { CpuState, DisasmLine, EmulatorBackend, BundledRomInfo } from "../types";
+
+const BREAKPOINTS_KEY = "fc-breakpoints";
 
 /** M-cycles per DMG frame (70224 T-cycles / 4). */
 export const MCYCLES_PER_FRAME = 17556;
@@ -21,6 +24,12 @@ export class EmuController {
   fps = $state(0);
   frameCount = $state(0);
   bundledRoms = $state<BundledRomInfo[]>([]);
+  /**
+   * PC addresses flagged as breakpoints. Reactive + persisted. NOT yet
+   * enforced by the run loop — the break engine is a planned follow-up;
+   * this is the durable UI state it will consume.
+   */
+  breakpoints = $state(new SvelteSet<number>());
 
   #runningRef = false;
   #raf = 0;
@@ -36,6 +45,12 @@ export class EmuController {
   constructor(backend: EmulatorBackend) {
     this.backend = backend;
     this.bundledRoms = backend.listBundledRoms();
+    try {
+      const raw = localStorage.getItem(BREAKPOINTS_KEY);
+      if (raw) for (const a of JSON.parse(raw) as number[]) this.breakpoints.add(a);
+    } catch {
+      /* corrupt/absent — start empty */
+    }
   }
 
   destroy(): void {
@@ -186,6 +201,22 @@ export class EmuController {
   async disasm(addr: number, count: number): Promise<DisasmLine[]> {
     if (!this.backend.disassemble || !this.romLoaded) return [];
     return this.backend.disassemble(addr, count);
+  }
+
+  // ─── Breakpoints (persisted; enforcement pending the break engine) ─────
+
+  toggleBreakpoint(addr: number): void {
+    if (this.breakpoints.has(addr)) this.breakpoints.delete(addr);
+    else this.breakpoints.add(addr);
+    this.#saveBreakpoints();
+  }
+
+  #saveBreakpoints(): void {
+    try {
+      localStorage.setItem(BREAKPOINTS_KEY, JSON.stringify([...this.breakpoints]));
+    } catch {
+      /* storage unavailable — best-effort */
+    }
   }
 
   // ─── Joypad ───────────────────────────────────────────────────────────
