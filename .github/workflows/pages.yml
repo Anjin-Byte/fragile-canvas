@@ -38,8 +38,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
+        # web bundles ui and phi from source, so their deps must be
+        # installed (each is a file: link with its own node_modules).
         run: |
           cd ui && npm install
+          cd ../phi && npm install
           cd ../web && npm install
 
       - name: Build site
