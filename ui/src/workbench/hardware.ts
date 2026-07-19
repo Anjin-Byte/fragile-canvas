@@ -120,6 +120,22 @@ export function refTarget(line: DisasmLine): number | undefined {
   return t ? parseInt(t[1], 16) : undefined;
 }
 
+/**
+ * The literal memory address an instruction reads/writes, for live value
+ * annotation. Only resolves fixed addresses — `($FFxx)` (LDH) and `($XXXX)`
+ * (LD a16); register-indirect operands like `(HL)` need CPU state and are
+ * left to the Memory panel.
+ */
+export function operandRef(line: DisasmLine): number | undefined {
+  // Control flow uses the same $XXXX syntax but is not a data reference.
+  if (CONTROL_FLOW.test(line.text)) return undefined;
+  const mem = line.text.match(/\(\$([0-9A-Fa-f]{2,4})\)/);
+  if (!mem) return undefined;
+  const raw = parseInt(mem[1], 16);
+  // LDH's operand is the full FF-page address already (formatter emits $FFxx).
+  return raw & 0xffff;
+}
+
 /** Comment for a disassembly line: register name, or resolved jump target. */
 export function commentFor(line: DisasmLine): string | undefined {
   const target = refTarget(line);

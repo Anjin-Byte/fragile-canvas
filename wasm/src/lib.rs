@@ -118,6 +118,15 @@ impl EmulatorWasm {
         to_js_result(self.session.step(ticks))
     }
 
+    /// Execute exactly one instruction (not one M-cycle) and return the
+    /// resulting CPU state. The proper debugger step primitive — used for
+    /// run-to-cursor and instruction-accurate stepping.
+    #[wasm_bindgen(js_name = stepInstruction)]
+    pub fn step_instruction(&mut self) -> Result<JsValue, JsValue> {
+        self.session.step_traced().map_err(|e| JsValue::from_str(e))?;
+        to_js_result(self.session.cpu_snapshot())
+    }
+
     #[wasm_bindgen(js_name = getState)]
     pub fn get_state(&self) -> Result<JsValue, JsValue> {
         to_js_result(self.session.cpu_snapshot())

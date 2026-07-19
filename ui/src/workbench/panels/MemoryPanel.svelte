@@ -51,6 +51,20 @@
     void refresh();
   });
 
+  // Cross-panel navigation from the Disassembly panel ("Show in Memory").
+  let lastMemSeq = 0;
+  let highlight = $state<number | null>(null);
+  let highlightTimer: ReturnType<typeof setTimeout>;
+  $effect(() => {
+    const r = emu.memoryRequest;
+    if (r.seq === lastMemSeq) return;
+    lastMemSeq = r.seq;
+    jumpTo(r.addr);
+    highlight = r.addr;
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => (highlight = null), 1600);
+  });
+
   const rows = $derived.by(() => {
     const out: { addr: number; hex: string[]; ascii: string }[] = [];
     for (let r = 0; r < PAGE / 16; r++) {
@@ -97,7 +111,11 @@
           <span class="mem-row-addr">{hex16(row.addr)}</span>
           <span class="mem-row-hex">
             {#each row.hex as byte, i}
-              <span class="mem-byte" class:mem-byte-gap={i === 8}>{byte}</span>
+              <span
+                class="mem-byte"
+                class:mem-byte-gap={i === 8}
+                class:hl={highlight === row.addr + i}
+              >{byte}</span>
             {/each}
           </span>
           <span class="mem-row-ascii">{row.ascii}</span>
@@ -210,6 +228,20 @@
 
   .mem-byte-gap {
     margin-left: 6px;
+  }
+
+  /* Transient flash for a byte revealed from the Disassembly panel. */
+  .mem-byte.hl {
+    color: oklch(0.18 0.01 115);
+    background: var(--interactive);
+    border-radius: 2px;
+    box-shadow: 0 0 0 2px var(--interactive);
+    animation: mem-hl-fade 1.6s ease forwards;
+  }
+
+  @keyframes mem-hl-fade {
+    0%, 55% { opacity: 1; }
+    100% { opacity: 1; background: var(--interactive-fill); color: var(--text-hi); box-shadow: none; }
   }
 
   .mem-row-ascii {

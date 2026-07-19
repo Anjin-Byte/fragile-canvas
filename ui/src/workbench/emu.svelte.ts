@@ -30,6 +30,12 @@ export class EmuController {
    * this is the durable UI state it will consume.
    */
   breakpoints = $state(new SvelteSet<number>());
+  /**
+   * Cross-panel request to reveal an address in the Memory panel. The seq
+   * counter lets each consumer (MemoryPanel navigates, Workbench activates
+   * the tab) react to every request without a shared-clear race.
+   */
+  memoryRequest = $state<{ addr: number; seq: number }>({ addr: 0, seq: 0 });
 
   #runningRef = false;
   #raf = 0;
@@ -168,6 +174,47 @@ export class EmuController {
     await this.stepCycles(MCYCLES_PER_FRAME);
   }
 
+  /** Step exactly one instruction (while paused). */
+  async stepInstruction(): Promise<void> {
+    if (this.running || !this.romLoaded || !this.backend.stepInstruction) return;
+    try {
+      this.cpu = await this.backend.stepInstruction();
+      this.frameCount++;
+      await this.#drawFrame();
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  /**
+   * Run until PC reaches `addr` (stopping before executing it) or `maxInstr`
+   * instructions elapse. Instruction-accurate via stepInstruction, so the PC
+   * check can't false-trigger mid-instruction. Returns true if the target
+   * was hit.
+   */
+  async runTo(addr: number, maxInstr = 1_000_000): Promise<boolean> {
+    if (!this.romLoaded || !this.backend.stepInstruction) return false;
+    this.pause();
+    try {
+      let state = this.cpu;
+      for (let i = 0; i < maxInstr; i++) {
+        if (state && state.pc === addr) break;
+        state = await this.backend.stepInstruction();
+        this.cpu = state;
+      }
+      this.frameCount++;
+      await this.#drawFrame();
+      return this.cpu?.pc === addr;
+    } catch (e) {
+      this.error = String(e);
+      return false;
+    }
+  }
+
+  get canStepInstruction(): boolean {
+    return typeof this.backend.stepInstruction === "function";
+  }
+
   /** Reset = re-load the last ROM (the backend's reset() is a teardown). */
   async reset(): Promise<void> {
     if (!this.romLoaded || !this.#lastRom) return;
@@ -217,6 +264,11 @@ export class EmuController {
     } catch {
       /* storage unavailable — best-effort */
     }
+  }
+
+  /** Ask the Memory panel to reveal `addr` (and bring its tab to front). */
+  requestMemoryView(addr: number): void {
+    this.memoryRequest = { addr: addr & 0xffff, seq: this.memoryRequest.seq + 1 };
   }
 
   // ─── Joypad ───────────────────────────────────────────────────────────

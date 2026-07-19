@@ -80,6 +80,17 @@
     model = new DockModel(DEFAULT_LAYOUT);
   }
 
+  // Bring the Memory tab to front when another panel requests a view of it
+  // (e.g. "Show in Memory" from the Disassembly panel).
+  let lastMemSeq = 0;
+  $effect(() => {
+    const r = emu.memoryRequest;
+    if (r.seq === lastMemSeq) return;
+    lastMemSeq = r.seq;
+    const leaf = model.findPanel("memory");
+    if (leaf) model.activatePanel(leaf.id, "memory");
+  });
+
   // ─── Keyboard: joypad + transport ──────────────────────────────────────
 
   const KEY_MAP: Record<string, { group: "action" | "dpad"; bit: number }> = {

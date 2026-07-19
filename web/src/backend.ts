@@ -76,6 +76,16 @@ export const wasmBackend: EmulatorBackend = {
     return state;
   },
 
+  async stepInstruction(): Promise<CpuState> {
+    if (!emu) throw new Error("no ROM loaded");
+    // No audio drain — debugger stepping / run-to is fast-forward, not
+    // playback (avoids flooding the worklet during run-to's step loop).
+    if (typeof (emu as any).stepInstruction !== "function") {
+      return emu.step(1) as CpuState; // pre-rebuild fallback
+    }
+    return (emu as any).stepInstruction() as CpuState;
+  },
+
   async tickFrame(elapsedNs: bigint): Promise<CpuState> {
     if (!emu) throw new Error("no ROM loaded");
     const state = emu.tickFrame(elapsedNs) as CpuState;
