@@ -1,0 +1,532 @@
+<!doctype html>
+<!--
+  LCD renderer regression harness.
+
+  Renders the SAME synthetic game frame through the ORIGINAL pipeline
+  (16-bit normal map → canvas → JS grain loop → RGBA texture → original
+  shader) and the OPTIMIZED pipeline (grain → R8 texture → restructured
+  shader with precomputed OKLAB uniforms), then compares framebuffers
+  byte-for-byte via readPixels.
+
+  Modes (location.hash):
+    #compute  in-page grain for both paths; also exports the baked grain
+              bytes as base64 (for encoding to substrate_grain.png)
+    #png      new path loads ../../ui/src/components/substrate_grain.png
+              (the baked file) — proves the PNG encode/decode round-trip
+              and the R8 <img> upload path used by Screen.svelte
+
+  Run headless:
+    chrome --headless=new --allow-file-access-from-files \
+      --virtual-time-budget=180000 --dump-dom harness.html#compute
+
+  Results land in <div id="result"> and document.title.
+-->
+<html>
+<head><meta charset="utf-8"><title>RUNNING</title></head>
+<body>
+<div id="result">running…</div>
+<canvas id="oldCanvas" width="640" height="576"></canvas>
+<canvas id="newCanvas" width="640" height="576"></canvas>
+<pre id="grain" style="display:none"></pre>
+<script>
+const SCREEN_W = 160, SCREEN_H = 144;
+// The source normal map (16-bit, 89 MB) lives in the gitignored reference
+// directory — ui/src/components/substrate_normal.png was a byte-identical
+// copy, removed once the baked grain replaced it at runtime.
+const SOURCE_NORMAL_URL = "../../gameboy_ref/GAMEBOY_TEXTURES/Plastic004_4K_NormalGL.png";
+const BAKED_GRAIN_URL = "../../ui/src/components/substrate_grain.png";
+
+const DMG_PALETTE = [
+  [0x9A / 255, 0x9E / 255, 0x3F / 255],
+  [0x49 / 255, 0x6B / 255, 0x22 / 255],
+  [0x0E / 255, 0x45 / 255, 0x0B / 255],
+  [0x1B / 255, 0x2A / 255, 0x09 / 255],
+];
+
+// ─── ORIGINAL fragment shader — frozen verbatim from Screen.svelte ────────
+const VERT_SRC = `#version 300 es
+    in vec2 a_pos;
+    in vec2 a_uv;
+    out vec2 v_uv;
+    void main() {
+      v_uv = a_uv;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+const OLD_FRAG_SRC = `#version 300 es
+    precision highp float;
+
+    in vec2 v_uv;
+    out vec4 fragColor;
+
+    uniform sampler2D u_game;
+    uniform sampler2D u_overlay;
+    uniform vec2 u_resolution;
+    uniform vec3 u_palette[4];
+    uniform float u_gridIntensity; // 0 = flat palette, 1 = full LCD model
+    uniform float u_overlayIntensity; // 0 = no overlay, 1 = full scratch effect
+
+    vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }
+    vec3 linearToSrgb(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0/2.2)); }
+
+    vec3 linearToOklab(vec3 c) {
+      float l = pow(max(0.4122*c.r + 0.5363*c.g + 0.0514*c.b, 0.0), 1.0/3.0);
+      float m = pow(max(0.2119*c.r + 0.6806*c.g + 0.1075*c.b, 0.0), 1.0/3.0);
+      float s = pow(max(0.0883*c.r + 0.2817*c.g + 0.6300*c.b, 0.0), 1.0/3.0);
+      return vec3(
+        0.2105*l + 0.7937*m - 0.0041*s,
+        1.9780*l - 2.4286*m + 0.4506*s,
+        0.0259*l + 0.7827*m - 0.8086*s
+      );
+    }
+
+    vec3 oklabToLinear(vec3 lab) {
+      float l = lab.x + 0.3963*lab.y + 0.2159*lab.z;
+      float m = lab.x - 0.1056*lab.y - 0.0639*lab.z;
+      float s = lab.x - 0.0894*lab.y - 1.2910*lab.z;
+      return vec3(
+        +4.0767*l*l*l - 3.3077*m*m*m + 0.2310*s*s*s,
+        -1.2684*l*l*l + 2.6097*m*m*m - 0.3413*s*s*s,
+        -0.0042*l*l*l - 0.7034*m*m*m + 1.7076*s*s*s
+      );
+    }
+
+    vec3 toOklab(vec3 srgb) { return linearToOklab(srgbToLinear(srgb)); }
+    vec3 fromOklab(vec3 lab) { return linearToSrgb(oklabToLinear(lab)); }
+
+    void main() {
+      float shadeRaw = texture(u_game, v_uv).r;
+      int shade = clamp(int(shadeRaw * 255.0 + 0.5), 0, 3);
+      vec3 pixelColor = u_palette[shade];
+
+      float grain = texture(u_overlay, v_uv * 12.0).r; // tiled 12x across screen
+      float variation = grain - 0.5; // centered around 0
+      vec3 labPixel = toOklab(pixelColor);
+      labPixel.x += variation * u_overlayIntensity;
+      pixelColor = fromOklab(labPixel);
+
+      float dotW = u_resolution.x / float(160);
+      float dotH = u_resolution.y / float(144);
+
+      float cellX = mod(gl_FragCoord.x, dotW) / dotW;
+      float cellY = mod(gl_FragCoord.y, dotH) / dotH;
+
+      float gapPx = 0.8;
+      float gapNormX = gapPx / max(dotW, 1.0);
+      float gapNormY = gapPx / max(dotH, 1.0);
+      float softNorm = 0.5 / max(dotW, 1.0);
+
+      float edgeL = smoothstep(0.0, gapNormX + softNorm, cellX);
+      float edgeR = smoothstep(0.0, gapNormX + softNorm, 1.0 - cellX);
+      float edgeB = smoothstep(0.0, gapNormY + softNorm, cellY);
+      float edgeT = smoothstep(0.0, gapNormY + softNorm, 1.0 - cellY);
+
+      float inSegment = edgeL * edgeR * edgeT * edgeB;
+
+      vec2 texelSize = vec2(1.0 / float(160), 1.0 / float(144));
+
+      float sL = texture(u_game, v_uv + vec2(-texelSize.x, 0.0)).r;
+      float sR = texture(u_game, v_uv + vec2( texelSize.x, 0.0)).r;
+      float sT = texture(u_game, v_uv + vec2(0.0, -texelSize.y)).r;
+      float sB = texture(u_game, v_uv + vec2(0.0,  texelSize.y)).r;
+
+      vec3 cL = u_palette[clamp(int(sL * 255.0 + 0.5), 0, 3)];
+      vec3 cR = u_palette[clamp(int(sR * 255.0 + 0.5), 0, 3)];
+      vec3 cT = u_palette[clamp(int(sT * 255.0 + 0.5), 0, 3)];
+      vec3 cB = u_palette[clamp(int(sB * 255.0 + 0.5), 0, 3)];
+
+      vec3 labShade0 = toOklab(u_palette[0]);
+      vec3 labSelf = toOklab(pixelColor);
+      float neighborAmt = 0.3;
+      float liftAmt = 0.35;
+
+      vec3 gapL = fromOklab(mix(mix(labSelf, toOklab(cL), neighborAmt), labShade0, liftAmt));
+      vec3 gapR = fromOklab(mix(mix(labSelf, toOklab(cR), neighborAmt), labShade0, liftAmt));
+      vec3 gapT = fromOklab(mix(mix(labSelf, toOklab(cT), neighborAmt), labShade0, liftAmt));
+      vec3 gapB = fromOklab(mix(mix(labSelf, toOklab(cB), neighborAmt), labShade0, liftAmt));
+
+      float gapL_w = 1.0 - edgeL;
+      float gapR_w = 1.0 - edgeR;
+      float gapT_w = 1.0 - edgeT;
+      float gapB_w = 1.0 - edgeB;
+      float totalGap = gapL_w + gapR_w + gapT_w + gapB_w;
+
+      vec3 lcdColor;
+      if (totalGap < 0.001) {
+        lcdColor = pixelColor;
+      } else {
+        vec3 gapBlend = (gapL * gapL_w + gapR * gapR_w + gapT * gapT_w + gapB * gapB_w) / totalGap;
+        lcdColor = mix(pixelColor, gapBlend, min(totalGap, 1.0));
+      }
+
+      vec3 flatColor = u_palette[shade];
+      vec3 color = mix(flatColor, lcdColor, u_gridIntensity);
+
+      fragColor = vec4(color, 1.0);
+    }
+  `;
+
+// ─── NEW fragment shader — restructured, must match Screen.svelte ─────────
+const NEW_FRAG_SRC = `#version 300 es
+    precision highp float;
+
+    in vec2 v_uv;
+    out vec4 fragColor;
+
+    uniform sampler2D u_game;
+    uniform sampler2D u_overlay;
+    uniform vec2 u_resolution;
+    uniform vec3 u_palette[4];
+    uniform vec3 u_paletteLab[4];
+    uniform vec3 u_gapBase[4];
+    uniform float u_gridIntensity;
+    uniform float u_overlayIntensity;
+
+    vec3 linearToSrgb(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0/2.2)); }
+
+    vec3 oklabToLinear(vec3 lab) {
+      float l = lab.x + 0.3963*lab.y + 0.2159*lab.z;
+      float m = lab.x - 0.1056*lab.y - 0.0639*lab.z;
+      float s = lab.x - 0.0894*lab.y - 1.2910*lab.z;
+      return vec3(
+        +4.0767*l*l*l - 3.3077*m*m*m + 0.2310*s*s*s,
+        -1.2684*l*l*l + 2.6097*m*m*m - 0.3413*s*s*s,
+        -0.0042*l*l*l - 0.7034*m*m*m + 1.7076*s*s*s
+      );
+    }
+
+    vec3 fromOklab(vec3 lab) { return linearToSrgb(oklabToLinear(lab)); }
+
+    int shadeAt(ivec2 p) {
+      ivec2 q = clamp(p, ivec2(0), ivec2(159, 143));
+      float s = texelFetch(u_game, q, 0).r;
+      return clamp(int(s * 255.0 + 0.5), 0, 3);
+    }
+
+    void main() {
+      float shadeRaw = texture(u_game, v_uv).r;
+      int shade = clamp(int(shadeRaw * 255.0 + 0.5), 0, 3);
+      vec3 flatColor = u_palette[shade];
+
+      float grain = texture(u_overlay, v_uv * 12.0).r;
+      vec3 labPixel = u_paletteLab[shade];
+      labPixel.x += (grain - 0.5) * u_overlayIntensity;
+      vec3 pixelColor = fromOklab(labPixel);
+
+      float dotW = u_resolution.x / float(160);
+      float dotH = u_resolution.y / float(144);
+
+      float cellX = mod(gl_FragCoord.x, dotW) / dotW;
+      float cellY = mod(gl_FragCoord.y, dotH) / dotH;
+
+      float gapPx = 0.8;
+      float gapNormX = gapPx / max(dotW, 1.0);
+      float gapNormY = gapPx / max(dotH, 1.0);
+      float softNorm = 0.5 / max(dotW, 1.0);
+
+      float edgeL = smoothstep(0.0, gapNormX + softNorm, cellX);
+      float edgeR = smoothstep(0.0, gapNormX + softNorm, 1.0 - cellX);
+      float edgeB = smoothstep(0.0, gapNormY + softNorm, cellY);
+      float edgeT = smoothstep(0.0, gapNormY + softNorm, 1.0 - cellY);
+
+      float gapL_w = 1.0 - edgeL;
+      float gapR_w = 1.0 - edgeR;
+      float gapT_w = 1.0 - edgeT;
+      float gapB_w = 1.0 - edgeB;
+      float totalGap = gapL_w + gapR_w + gapT_w + gapB_w;
+
+      vec3 lcdColor;
+      if (totalGap < 0.001) {
+        lcdColor = pixelColor;
+      } else {
+        ivec2 texel = ivec2(floor(v_uv * vec2(160.0, 144.0)));
+        // mix(mix(self, n, .3), s0, .35) expanded with constant weights:
+        // self*0.455 + n*0.195 + s0*0.35; the last two are u_gapBase[n].
+        vec3 selfPart = labPixel * 0.455;
+        vec3 gapL = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(-1, 0))]);
+        vec3 gapR = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2( 1, 0))]);
+        vec3 gapT = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(0, -1))]);
+        vec3 gapB = fromOklab(selfPart + u_gapBase[shadeAt(texel + ivec2(0,  1))]);
+
+        vec3 gapBlend = (gapL * gapL_w + gapR * gapR_w + gapT * gapT_w + gapB * gapB_w) / totalGap;
+        lcdColor = mix(pixelColor, gapBlend, min(totalGap, 1.0));
+      }
+
+      vec3 color = mix(flatColor, lcdColor, u_gridIntensity);
+      fragColor = vec4(color, 1.0);
+    }
+  `;
+
+// ─── CPU OKLAB (same truncated constants as the shader) ───────────────────
+function toOklabJs(rgb) {
+  const [r, g, b] = rgb.map((v) => Math.pow(v, 2.2));
+  const l = Math.cbrt(Math.max(0.4122 * r + 0.5363 * g + 0.0514 * b, 0));
+  const m = Math.cbrt(Math.max(0.2119 * r + 0.6806 * g + 0.1075 * b, 0));
+  const s = Math.cbrt(Math.max(0.0883 * r + 0.2817 * g + 0.63 * b, 0));
+  return [
+    0.2105 * l + 0.7937 * m - 0.0041 * s,
+    1.978 * l - 2.4286 * m + 0.4506 * s,
+    0.0259 * l + 0.7827 * m - 0.8086 * s,
+  ];
+}
+const PALETTE_LAB = DMG_PALETTE.map(toOklabJs);
+const GAP_BASE = PALETTE_LAB.map((lab) =>
+  lab.map((v, i) => v * 0.195 + PALETTE_LAB[0][i] * 0.35),
+);
+
+// ─── Deterministic test frame: structured + noise, all shade pairs ────────
+function makeTestFrame() {
+  const d = new Uint8Array(SCREEN_W * SCREEN_H);
+  let seed = 0x1234abcd;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed;
+  };
+  for (let y = 0; y < SCREEN_H; y++) {
+    for (let x = 0; x < SCREEN_W; x++) {
+      let v;
+      if (y < 36) v = (x + y) & 3;                       // fine checker, all pairs
+      else if (y < 72) v = ((x >> 2) + (y >> 2)) & 3;    // 4px blocks
+      else if (y < 90) v = 0;                            // solid lightest
+      else if (y < 108) v = 3;                           // solid darkest
+      else v = rand() & 3;                               // noise
+      d[y * SCREEN_W + x] = v;
+    }
+  }
+  return d;
+}
+
+// ─── Grain: exact original conversion loop ────────────────────────────────
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(new Error("image load failed: " + url));
+    img.src = url;
+  });
+}
+
+function computeGrainCanvas(img) {
+  const tmp = document.createElement("canvas");
+  tmp.width = img.width;
+  tmp.height = img.height;
+  const ctx = tmp.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const imgData = ctx.getImageData(0, 0, tmp.width, tmp.height);
+  const px = imgData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const dx = px[i] / 255 - 0.5;
+    const dy = px[i + 1] / 255 - 0.5;
+    const mag = Math.sqrt(dx * dx + dy * dy) * 2;
+    const v = Math.min(mag * 255, 255);
+    px[i] = v;
+    px[i + 1] = v;
+    px[i + 2] = v;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return { canvas: tmp, ctx, width: tmp.width, height: tmp.height };
+}
+
+/** Extract the R channel (the grain scalar) as bytes. */
+function grainBytes(grain) {
+  const data = grain.ctx.getImageData(0, 0, grain.width, grain.height).data;
+  const out = new Uint8Array(grain.width * grain.height);
+  for (let i = 0; i < out.length; i++) out[i] = data[i * 4];
+  return out;
+}
+
+// ─── GL setup ─────────────────────────────────────────────────────────────
+function makeRenderer(canvas, fragSrc) {
+  const gl = canvas.getContext("webgl2", { antialias: false, alpha: false, preserveDrawingBuffer: true });
+  if (!gl) throw new Error("no webgl2");
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      throw new Error("shader: " + gl.getShaderInfoLog(sh));
+    }
+    return sh;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT_SRC));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error("link: " + gl.getProgramInfoLog(prog));
+  }
+  gl.useProgram(prog);
+
+  const quad = new Float32Array([-1, -1, 0, 1, 1, -1, 1, 1, -1, 1, 0, 0, 1, 1, 1, 0]);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, "a_pos");
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 16, 0);
+  const aUv = gl.getAttribLocation(prog, "a_uv");
+  gl.enableVertexAttribArray(aUv);
+  gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 16, 8);
+
+  // Game texture (unit 0)
+  const gameTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, gameTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, SCREEN_W, SCREEN_H, 0, gl.RED, gl.UNSIGNED_BYTE, makeTestFrame());
+
+  const u = (n) => gl.getUniformLocation(prog, n);
+  gl.uniform1i(u("u_game"), 0);
+  gl.uniform1i(u("u_overlay"), 1);
+  gl.uniform2f(u("u_resolution"), canvas.width, canvas.height);
+  const flat = new Float32Array(12);
+  DMG_PALETTE.forEach((c, i) => flat.set(c, i * 3));
+  gl.uniform3fv(u("u_palette"), flat);
+  gl.uniform1f(u("u_gridIntensity"), 1.0);
+  gl.uniform1f(u("u_overlayIntensity"), 0.03);
+  return { gl, u };
+}
+
+function uploadOverlayRGBA(gl, source) {
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+}
+
+function uploadOverlayR8(gl, width, height, bytesOrImage) {
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  if (bytesOrImage instanceof Uint8Array) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, bytesOrImage);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gl.RED, gl.UNSIGNED_BYTE, bytesOrImage);
+  }
+}
+
+function setNewUniforms(gl, u) {
+  const lab = new Float32Array(12);
+  PALETTE_LAB.forEach((c, i) => lab.set(c, i * 3));
+  gl.uniform3fv(u("u_paletteLab"), lab);
+  const gap = new Float32Array(12);
+  GAP_BASE.forEach((c, i) => gap.set(c, i * 3));
+  gl.uniform3fv(u("u_gapBase"), gap);
+}
+
+function renderAndRead(gl, canvas) {
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  const px = new Uint8Array(canvas.width * canvas.height * 4);
+  gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return px;
+}
+
+function compare(a, b) {
+  let maxD = 0, diffPx = 0, d1 = 0, d2 = 0, dBig = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    let pd = 0;
+    for (let c = 0; c < 3; c++) {
+      const d = Math.abs(a[i + c] - b[i + c]);
+      if (d > pd) pd = d;
+    }
+    if (pd > 0) {
+      diffPx++;
+      if (pd === 1) d1++;
+      else if (pd === 2) d2++;
+      else dBig++;
+      if (pd > maxD) maxD = pd;
+    }
+  }
+  return { maxD, diffPx, d1, d2, dBig, total: a.length / 4 };
+}
+
+function toB64(bytes) {
+  let out = "";
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(out);
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────
+async function main() {
+  const mode = (location.hash || "#compute").slice(1);
+  const lines = [];
+
+  // OLD path: original pipeline, original shader.
+  const normalImg = await loadImage(SOURCE_NORMAL_URL);
+  const grain = computeGrainCanvas(normalImg);
+  const oldR = makeRenderer(document.getElementById("oldCanvas"), OLD_FRAG_SRC);
+  uploadOverlayRGBA(oldR.gl, grain.canvas);
+  const oldPx = renderAndRead(oldR.gl, document.getElementById("oldCanvas"));
+
+  // NEW path: R8 grain, new shader + LAB uniforms.
+  const bytes = grainBytes(grain);
+  const newR = makeRenderer(document.getElementById("newCanvas"), NEW_FRAG_SRC);
+  setNewUniforms(newR.gl, newR.u);
+
+  if (mode === "png") {
+    // The baked file, decoded by the browser, uploaded exactly as
+    // Screen.svelte will upload it.
+    const bakedImg = await loadImage(BAKED_GRAIN_URL);
+    uploadOverlayR8(newR.gl, bakedImg.width, bakedImg.height, bakedImg);
+
+    // Also byte-compare the decoded PNG against the in-page computation.
+    const tmp = document.createElement("canvas");
+    tmp.width = bakedImg.width;
+    tmp.height = bakedImg.height;
+    const ctx = tmp.getContext("2d");
+    ctx.drawImage(bakedImg, 0, 0);
+    const decoded = ctx.getImageData(0, 0, tmp.width, tmp.height).data;
+    let byteDiffs = 0, maxByteD = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      const d = Math.abs(decoded[i * 4] - bytes[i]);
+      if (d > 0) { byteDiffs++; if (d > maxByteD) maxByteD = d; }
+    }
+    lines.push(`GRAIN-BYTES png-vs-computed: diffs=${byteDiffs}/${bytes.length} max=${maxByteD}`);
+  } else {
+    uploadOverlayR8(newR.gl, grain.width, grain.height, bytes);
+  }
+
+  const newPx = renderAndRead(newR.gl, document.getElementById("newCanvas"));
+
+  const r = compare(oldPx, newPx);
+  lines.push(
+    `FRAMEBUFFER old-vs-new [${mode}]: total=${r.total}px diff=${r.diffPx} ` +
+    `(Δ1=${r.d1} Δ2=${r.d2} Δ>2=${r.dBig}) max=${r.maxD}`,
+  );
+
+  if (mode === "compute") {
+    document.getElementById("grain").textContent =
+      grain.width + "x" + grain.height + ":" + toB64(bytes);
+  }
+
+  document.getElementById("result").textContent = lines.join("\n");
+  document.title = r.maxD <= 1 && r.dBig === 0 ? "PASS" : "FAIL max=" + r.maxD;
+}
+
+main().catch((e) => {
+  document.getElementById("result").textContent = "ERROR: " + (e && e.message);
+  document.title = "ERROR";
+});
+</script>
+</body>
+</html>
