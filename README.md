@@ -1,93 +1,71 @@
-# Okra ([demo](https://anjin-byte.github.io/okra-emu/))
+<div align="center">
 
-> Formerly codenamed *fragile-canvas* — the legacy name still appears in package/crate identifiers.
+# Okra
 
-Game Boy (DMG) emulator. The SM83 CPU is modeled as a microcode engine:
-each opcode is decoded into a sequence of primitive `MicroOp`s
-(register loads, ALU operations, memory reads/writes, flag updates)
-which execute one per cycle through a fetch-decode-execute pipeline.
-This decomposes the full ISA into a small set of reusable building blocks
-rather than implementing each instruction as a monolithic handler.
+**A Game Boy (DMG) emulator written in Rust, with a built-in debugger.**
 
-This project distributes the Tobu Tobu Girl ROM as an example / demo game. If you enjoy the bundled demo, consider supporting [Simon Larsen](https://github.com/SimonLarsen) and the creators at Tangram Games.
+[**Try it in the browser →**](https://anjin-byte.github.io/okra-emu/)
 
----
+</div>
 
-## Structure
+[![Okra running Tobu Tobu Girl DX](docs/screenshots/hero.png)](https://anjin-byte.github.io/okra-emu/)
 
-```
-sm83/        emulator library (CPU, MMU, timer, clock governor, tracer)
-cli/         headless binary (ROM loading, CLI, config, debug tracing)
-desktop/     Tauri + React native desktop app
-ui/          shared React components and styles
-wasm/        wasm-bindgen crate (compiles sm83 to WASM)
-web/         Vite + React browser app (WASM backend)
-```
+It runs in the browser via WebAssembly, and the debugger lets you poke at a running game — disassembly, CPU and PPU registers, and memory.
 
----
+## Status
 
-## Usage
+A personal project and a work in progress. The core is reasonably accurate — it passes Blargg's `cpu_instrs` and most of the timing tests — but there are rough edges: a couple of timing cases still fail (see [Accuracy](#accuracy)), the debugger's breakpoints aren't enforced yet, and the desktop build is older than the web one.
 
-Requires a DMG boot ROM and a cartridge ROM. Paths are set in `config.yaml`:
+## Running it
 
-```yaml
-boot_rom: path/to/boot_rom.bin
-cart_rom: path/to/cartridge.gb
-```
+The [demo](https://anjin-byte.github.io/okra-emu/) is the easiest way to try it — it bundles a boot ROM and a demo game. Building locally needs [Rust](https://rustup.rs/) (with the `wasm32-unknown-unknown` target), [`wasm-pack`](https://rustwasm.github.io/wasm-pack/), and [Node](https://nodejs.org/) 20+.
 
-```
-make build     release build
-make run       run with config defaults
-make debug     run with instruction trace -> logs/<timestamp>.log
-make test      run sm83 tests
-make desktop   launch Tauri desktop app
-make web       build WASM and start browser dev server
-```
+```bash
+make web     # build the WASM core and start the dev server
+make test    # run the test suites
 
-Override the cartridge from the command line:
-
-```
+# or run a ROM headless, from the command line:
 cargo run --release -p fragile-canvas -- path/to/rom.gb
 ```
 
----
+## How the CPU works
 
-## Timing
+The SM83 is modeled one cycle at a time: each instruction decodes into a short sequence of primitive steps — register loads, ALU ops, memory reads and writes, flag updates — and the CPU runs one step per cycle. The fiddly memory- and interrupt-timing behavior mostly falls out of that instead of being special-cased per opcode.
 
-The DMG master clock is exactly 2^22 Hz (4,194,304 Hz). Every timing divider in the system is a power-of-two bit shift from this single crystal — nothing is an arbitrary frequency.
+The DMG runs off a single 2²² Hz clock, and every other timing divider is a power-of-two shift from it, so the emulator ticks at that resolution and keeps time with an integer accumulator (no drift).
 
-The emulator ticks at T-cycle (dot) resolution. A 16-bit system counter increments every T-cycle, and all subsystem timing derives from it:
-
-```
-1 T-cycle  = 1 dot  = 1 master clock tick   (2^22 Hz)
-4 T-cycles = 1 M-cycle                       (2^20 Hz)
-```
-
-By default the CLI runs governed at real-time speed. A clock governor tracks fractional T-cycle debt with an integer accumulator — zero algorithmic drift. Measured accuracy is ~26 ppm, lost to OS scheduling jitter (the governor math is exact). The actual DMG crystal has a ±30–50 ppm manufacturing tolerance that drifts in both directions.
+## Layout
 
 ```
---uncapped   run as fast as hardware allows
---bench      measure governor accuracy for 5 seconds
+sm83/        emulator core — CPU, PPU, APU, memory, timers
+sm83-isa/    assembler and disassembler
+cli/         headless command-line runner
+wasm/        WebAssembly bindings for the browser
+web/         the browser app (Vite + Svelte) — what the demo deploys
+ui/, phi/    shared Svelte UI and its components
+desktop/     a Tauri desktop build (older; runs the plain player, not the debugger)
 ```
 
----
+## Accuracy
+
+Checked against [Blargg's test ROMs](https://github.com/c-sp/game-boy-test-roms):
+
+| Suite | Result |
+| :-- | :-- |
+| `cpu_instrs` | 11 / 11 |
+| `instr_timing`, `mem_timing`, `mem_timing2` | pass |
+| `halt_bug`, `interrupt_time` | failing |
+
+```bash
+cargo test -p sm83 --test blargg
+```
+
+## Contributing
+
+Bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT
+[MIT](LICENSE).
 
----
-
-## Third-Party Licenses
-
-Tobu Tobu Girl Deluxe
-Copyright © Tangram Games
-
-Source code licensed under the MIT License.
-Game assets (graphics, music, sound, text) licensed under
-Creative Commons Attribution 4.0 International (CC BY 4.0).
-
-Original project:
-https://github.com/SimonLarsen/tobutobugirl
-
----
+The bundled demo game, **Tobu Tobu Girl Deluxe**, is © [Tangram Games](https://tangramgames.dk/tobutobugirl/) / [Simon Larsen](https://github.com/SimonLarsen) — code MIT, assets [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); if you enjoy it, support the creators. Hardware behavior was checked against the [Pandocs](https://gbdev.io/pandocs/).

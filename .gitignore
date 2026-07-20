@@ -10,7 +10,9 @@ target/
 
 # Local-only assets and scratch
 /assets
-/docs
+/docs/*
+# ...except README/presentation screenshots, which must ship in the public repo
+!/docs/screenshots/
 notes.txt
 gameboy_ref/*
 
