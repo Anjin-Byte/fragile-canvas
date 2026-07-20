@@ -2,7 +2,7 @@
   /**
    * Workbench — the dock-based debugger shell (gui_spec.md blockout).
    *
-   * Toolbar → DockLayout → StatusBar. The game screen is a permanent
+   * Toolbar → DockLayout → Footer. The game screen is a permanent
    * center panel; debugger panels dock around it or float above it.
    * One EmuController instance is the reactive source of truth for
    * every panel; layout persists via the dock's persistKey.
@@ -22,7 +22,7 @@
   import LayoutsMenu from "./LayoutsMenu.svelte";
   import CommandPalette from "./CommandPalette.svelte";
   import PreferencesModal from "./PreferencesModal.svelte";
-  import StatusBar from "./StatusBar.svelte";
+  import Footer from "./Footer.svelte";
   import ScreenPanel from "./panels/ScreenPanel.svelte";
   import CpuPanel from "./panels/CpuPanel.svelte";
   import MemoryPanel from "./panels/MemoryPanel.svelte";
@@ -237,7 +237,7 @@
     </DockLayout>
   </main>
 
-  <StatusBar {emu} />
+  <Footer />
 
   {#if dragging}
     <div class="drop-overlay">

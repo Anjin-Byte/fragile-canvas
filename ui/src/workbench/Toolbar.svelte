@@ -80,7 +80,23 @@
 </script>
 
 <header class="toolbar">
-  <span class="brand">Okra</span>
+  <div class="brand" title="Okra">
+    <svg class="brand-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <!-- stem -->
+      <path d="M12.4 5.6c.1-1.5.6-2.6 1.9-3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+      <!-- pod -->
+      <path d="M12 5.3c-3.1 3.1-3.1 10.9 0 16.1 3.1-5.2 3.1-13 0-16.1Z" fill="currentColor" />
+      <!-- ribs -->
+      <path
+        d="M12 8.2v9.4M9.9 10.5c-.5 3-.1 5.5.9 7.2M14.1 10.5c.5 3 .1 5.5-.9 7.2"
+        stroke="var(--surface-0)"
+        stroke-width="1"
+        stroke-linecap="round"
+        opacity="0.5"
+      />
+    </svg>
+    <span class="brand-name">Okra</span>
+  </div>
 
   <div class="transport">
     <button
@@ -120,7 +136,6 @@
 
   <!-- Panel visibility toggles (active = open; click to show/hide). -->
   {#if viewButtons.length > 0}
-    <div class="tb-divider"></div>
     <div class="tb-panels">
       {#each viewButtons as vb (vb.cmd.id)}
         {@const Icon = vb.icon}
@@ -139,7 +154,6 @@
 
   <!-- Master volume: mute button + inline slider. -->
   {#if audioOn && volumeCmd && muteCmd}
-    <div class="tb-divider"></div>
     <div class="tb-volume">
       <button
         class="tb-btn"
@@ -165,7 +179,6 @@
 
   <!-- Machine: speed presets + fast-forward. -->
   {#if speedCmd && turboCmd}
-    <div class="tb-divider"></div>
     <div class="tb-machine">
       <div class="tb-seg" role="group" aria-label="Emulation speed">
         {#each speedCmd.options as opt (opt.value)}
@@ -258,12 +271,28 @@
   }
 
   .brand {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--accent);
-    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     margin-right: 8px;
+    user-select: none;
+  }
+
+  .brand-mark {
+    width: 15px;
+    height: 15px;
+    color: var(--accent);
+    flex-shrink: 0;
+    /* a touch of depth so the mark sits on the bar, not in it */
+    filter: drop-shadow(0 1px 1.5px oklch(0 0 0 / 40%));
+  }
+
+  .brand-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
   }
 
   .transport {
@@ -328,27 +357,33 @@
   .tb-panels {
     display: flex;
     gap: 1px;
+    padding: 2px;
+    background: var(--fill-lo);
+    border-radius: var(--radius-sm);
   }
 
   .tb-volume {
     display: flex;
     align-items: center;
     gap: 4px;
+    padding: 2px 6px 2px 2px;
+    background: var(--fill-lo);
+    border-radius: var(--radius-sm);
   }
 
   .tb-machine {
     display: flex;
     align-items: center;
     gap: 3px;
-  }
-
-  /* Segmented speed presets — a grouped pill like .transport. */
-  .tb-seg {
-    display: flex;
-    gap: 2px;
     padding: 2px;
     background: var(--fill-lo);
     border-radius: var(--radius-sm);
+  }
+
+  /* Speed presets — a transparent group inside the machine tray. */
+  .tb-seg {
+    display: flex;
+    gap: 2px;
   }
 
   .tb-seg-btn {
