@@ -40,7 +40,6 @@ export const tauriBackend: EmulatorBackend = {
     // For now, mirror the static list from the sm83 crate.
     return [
       { id: "tobu-tobu-girl-dx", title: "Tobu Tobu Girl DX", author: "Tangram Games" },
-      { id: "cryohazard", title: "Cryohazard", author: "Incube8 Games" },
     ];
   },
 

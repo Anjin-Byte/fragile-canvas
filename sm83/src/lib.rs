@@ -28,10 +28,4 @@ pub const BUNDLED_ROMS: &[BundledRom] = &[
         author: "Tangram Games",
         data: include_bytes!("../roms/tobudx.gb"),
     },
-    BundledRom {
-        id: "cryohazard",
-        title: "Cryohazard",
-        author: "Incube8 Games",
-        data: include_bytes!("../roms/Cryohazard v1_0.gb"),
-    },
 ];

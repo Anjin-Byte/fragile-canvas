@@ -6,10 +6,11 @@
    * Shows the hero / ROM-load state until a ROM is running.
    */
   import Screen from "../../components/Screen.svelte";
-  import { Upload, Gamepad2 } from "lucide-svelte";
+  import { FolderOpen, Gamepad2 } from "lucide-svelte";
   import type { EmuController } from "../emu.svelte.js";
+  import type { Settings } from "../settings.svelte.js";
 
-  let { emu }: { emu: EmuController } = $props();
+  let { emu, settings }: { emu: EmuController; settings: Settings } = $props();
 
   let screen = $state<Screen>();
   let stageEl = $state<HTMLDivElement>();
@@ -20,6 +21,11 @@
   // Register the blit sink with the controller once the canvas exists.
   $effect(() => {
     if (screen) emu.attachScreen((shades) => screen!.blit(shades));
+  });
+
+  // Apply the LCD-effect display preference to the shader.
+  $effect(() => {
+    if (screen) screen.setLcdEffect(settings.lcdEffect);
   });
 
   // Fit a 160:144 well inside the panel with breathing room.
@@ -58,7 +64,7 @@
 
   {#if !emu.romLoaded}
     <div class="hero">
-      <span class="hero-title">fragile-canvas</span>
+      <!-- <span class="hero-title">fragile-canvas</span> -->
       <input
         bind:this={fileInput}
         type="file"
@@ -67,7 +73,7 @@
         onchange={onFileSelect}
       />
       <button class="hero-btn" onclick={() => fileInput?.click()}>
-        <Upload size={14} /> Load a ROM
+        <FolderOpen size={14} /> Load a ROM
       </button>
       {#if emu.bundledRoms.length > 0}
         <div class="hero-bundled">

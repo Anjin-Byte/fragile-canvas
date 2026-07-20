@@ -53,7 +53,6 @@ export const wasmBackend: EmulatorBackend = {
     // Avoids needing a WASM instance just to enumerate ROMs.
     return [
       { id: "tobu-tobu-girl-dx", title: "Tobu Tobu Girl DX", author: "Tangram Games" },
-      { id: "cryohazard", title: "Cryohazard", author: "Incube8 Games" },
     ];
   },
 
@@ -63,6 +62,21 @@ export const wasmBackend: EmulatorBackend = {
     await audio.init();
     await audio.resume();
     // loadBundledRom is available after WASM rebuild; fall back to loadDefaultRom
+    if (typeof (emu as any).loadBundledRom === "function") {
+      return (emu as any).loadBundledRom(id) as CpuState;
+    }
+    return emu.loadDefaultRom() as CpuState;
+  },
+
+  async loadBundledRomNoBoot(id: string): Promise<CpuState> {
+    await ensureInit();
+    emu = new EmulatorWasm();
+    await audio.init();
+    await audio.resume();
+    // Available after a WASM rebuild; fall back to the boot path otherwise.
+    if (typeof (emu as any).loadBundledRomNoBoot === "function") {
+      return (emu as any).loadBundledRomNoBoot(id) as CpuState;
+    }
     if (typeof (emu as any).loadBundledRom === "function") {
       return (emu as any).loadBundledRom(id) as CpuState;
     }
@@ -123,6 +137,10 @@ export const wasmBackend: EmulatorBackend = {
     if (!emu) return null;
     const data = emu.getFrame();
     return data ? new Uint8Array(data) : null;
+  },
+
+  setMasterVolume(volume: number): void {
+    audio.setVolume(volume);
   },
 
   async disassemble(addr: number, count: number): Promise<DisasmLine[]> {

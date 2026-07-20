@@ -12,11 +12,16 @@
     DockLayout,
     DockModel,
     type PanelDef,
-    type SerializedNode,
   } from "@gestalt/phi";
   import type { EmulatorBackend } from "../types";
   import { EmuController } from "./emu.svelte.js";
+  import { DEFAULT_LAYOUT } from "./layouts.js";
+  import { Settings } from "./settings.svelte.js";
+  import { createCommands } from "./commands.svelte.js";
   import Toolbar from "./Toolbar.svelte";
+  import LayoutsMenu from "./LayoutsMenu.svelte";
+  import CommandPalette from "./CommandPalette.svelte";
+  import PreferencesModal from "./PreferencesModal.svelte";
   import StatusBar from "./StatusBar.svelte";
   import ScreenPanel from "./panels/ScreenPanel.svelte";
   import CpuPanel from "./panels/CpuPanel.svelte";
@@ -37,32 +42,6 @@
 
   const LAYOUT_KEY = "fc-workbench-v1";
 
-  const DEFAULT_LAYOUT: SerializedNode = {
-    type: "branch",
-    orientation: "row",
-    children: [
-      {
-        type: "branch",
-        orientation: "column",
-        fraction: 0.22,
-        children: [
-          { type: "leaf", id: "left-top", panels: ["cpu"] },
-          { type: "leaf", id: "left-bottom", panels: ["disasm"], fraction: 1.4 },
-        ],
-      },
-      { type: "leaf", id: "center", panels: ["screen"], fraction: 0.5 },
-      {
-        type: "branch",
-        orientation: "column",
-        fraction: 0.28,
-        children: [
-          { type: "leaf", id: "right-top", panels: ["ppu", "apu", "io"] },
-          { type: "leaf", id: "right-bottom", panels: ["memory"] },
-        ],
-      },
-    ],
-  };
-
   const PANEL_DEFS: PanelDef[] = [
     { id: "screen", title: "Screen", closable: false, minWidth: 220, minHeight: 240 },
     { id: "cpu", title: "CPU", minWidth: 190 },
@@ -72,13 +51,32 @@
     { id: "apu", title: "APU", minWidth: 200 },
     { id: "io", title: "I/O", minWidth: 200 },
   ];
+  const PANEL_IDS = PANEL_DEFS.map((d) => d.id);
 
   let model = $state(DockModel.fromStorage(LAYOUT_KEY, DEFAULT_LAYOUT));
+  const getModel = () => model;
+  const setModel = (m: DockModel) => (model = m);
 
-  function resetLayout() {
-    localStorage.removeItem(LAYOUT_KEY);
-    model = new DockModel(DEFAULT_LAYOUT);
-  }
+  // ─── Settings + command registry ───────────────────────────────────────
+
+  const settings = new Settings();
+  const commands = createCommands({ emu, getModel, setModel, settings, panelDefs: PANEL_DEFS });
+
+  // Overlay surfaces driven from the toolbar / keyboard.
+  let paletteOpen = $state(false);
+  let prefsOpen = $state(false);
+
+  // Applier: push master volume (0 when muted) to the audio backend.
+  $effect(() => {
+    emu.backend.setMasterVolume?.(settings.muted ? 0 : settings.masterVolume);
+  });
+  // Appliers: keep the emulator's speed + boot flag in sync with settings.
+  $effect(() => {
+    emu.speedFactor = settings.speed;
+  });
+  $effect(() => {
+    emu.skipBoot = settings.skipBoot;
+  });
 
   // Bring the Memory tab to front when another panel requests a view of it
   // (e.g. "Show in Memory" from the Disassembly panel).
@@ -116,6 +114,13 @@
   }
 
   function handleKey(e: KeyboardEvent, pressed: boolean) {
+    // Command palette — Cmd/Ctrl+K, from anywhere (including inputs).
+    if (pressed && (e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      paletteOpen = !paletteOpen;
+      return;
+    }
+
     // Transport shortcuts work anywhere except editable fields.
     if (pressed && !isEditableTarget(e)) {
       if (e.key === "F5") {
@@ -199,13 +204,22 @@
 />
 
 <div class="workbench">
-  <Toolbar {emu} onresetlayout={resetLayout} />
+  <Toolbar
+    {emu}
+    {commands}
+    openPalette={() => (paletteOpen = true)}
+    openPreferences={() => (prefsOpen = true)}
+  >
+    {#snippet layouts()}
+      <LayoutsMenu {model} panelIds={PANEL_IDS} onapply={setModel} />
+    {/snippet}
+  </Toolbar>
 
   <main class="dock-area">
     <DockLayout {model} panelDefs={PANEL_DEFS} persistKey={LAYOUT_KEY}>
       {#snippet panel(id: string)}
         {#if id === "screen"}
-          <ScreenPanel {emu} />
+          <ScreenPanel {emu} {settings} />
         {:else if id === "cpu"}
           <CpuPanel {emu} />
         {:else if id === "memory"}
@@ -234,6 +248,9 @@
   {#if emu.error}
     <div class="error-toast">{emu.error}</div>
   {/if}
+
+  <CommandPalette {commands} open={paletteOpen} onclose={() => (paletteOpen = false)} />
+  <PreferencesModal {commands} open={prefsOpen} onclose={() => (prefsOpen = false)} />
 </div>
 
 <style>

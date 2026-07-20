@@ -106,6 +106,14 @@ impl EmulatorWasm {
         to_js(snap)
     }
 
+    /// Load a bundled ROM by id, skipping the boot ROM.
+    #[wasm_bindgen(js_name = loadBundledRomNoBoot)]
+    pub fn load_bundled_rom_no_boot(&mut self, id: &str) -> Result<JsValue, JsValue> {
+        let snap = self.session.load_bundled_rom_no_boot(id)
+            .map_err(|e| JsValue::from_str(e))?;
+        to_js(snap)
+    }
+
     /// Set joypad button state.
     /// `action`: A=1, B=2, Select=4, Start=8.
     /// `direction`: Right=1, Left=2, Up=4, Down=8.

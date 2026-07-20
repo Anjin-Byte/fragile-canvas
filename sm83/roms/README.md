@@ -14,7 +14,6 @@ implement CGB hardware (double-speed CPU, VRAM banking, color palettes).
 
 | File | Title | MBC | Size | Status |
 |------|-------|-----|------|--------|
-| Cryohazard v1_0.gb | Cryohazard | MBC5+RAM+BAT | 512 KiB | DMG-only — ready to bundle |
 | Opossum Country.gbc | Opossum Country | MBC5+RAM+BAT | 512 KiB | CGB-enhanced, DMG-compatible — should work |
 
 ## Not supported (CGB-only)

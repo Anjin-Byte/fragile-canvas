@@ -192,6 +192,10 @@
   let u_gridIntensity: WebGLUniformLocation | null = null;
   let u_overlayIntensity: WebGLUniformLocation | null = null;
 
+  // LCD grid/grain shader on (full DMG look) vs off (flat palette).
+  // Seeds the initial uniforms and is toggled live via setLcdEffect().
+  let lcdEffectOn = true;
+
   function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
     const shader = gl.createShader(type)!;
     gl.shaderSource(shader, source);
@@ -314,8 +318,8 @@
     gl.uniform1i(u_game, 0);
     gl.uniform1i(u_overlay, 1);
     gl.uniform2f(u_resolution, el.width, el.height);
-    gl.uniform1f(u_gridIntensity, 1.0); // full LCD grid
-    gl.uniform1f(u_overlayIntensity, 0.03); // subtle worn surface
+    gl.uniform1f(u_gridIntensity, lcdEffectOn ? 1.0 : 0.0); // full LCD grid
+    gl.uniform1f(u_overlayIntensity, lcdEffectOn ? 0.03 : 0.0); // subtle worn surface
 
     // Upload palette (sRGB, OKLAB, and precomputed gap bases)
     const paletteFlat = new Float32Array(12);
@@ -406,6 +410,18 @@
     gl.bindTexture(gl.TEXTURE_2D, gameTexture);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SCREEN_W, SCREEN_H, gl.RED, gl.UNSIGNED_BYTE, shades);
 
+    render();
+  }
+
+  /** Toggle the LCD grid/grain shader. Off = flat DMG palette (u_gridIntensity
+   *  and u_overlayIntensity → 0). Safe to call before the GL context exists;
+   *  the value is re-applied when it initializes. */
+  export function setLcdEffect(on: boolean) {
+    lcdEffectOn = on;
+    if (!gl || !program || !u_gridIntensity || !u_overlayIntensity) return;
+    gl.useProgram(program);
+    gl.uniform1f(u_gridIntensity, on ? 1.0 : 0.0);
+    gl.uniform1f(u_overlayIntensity, on ? 0.03 : 0.0);
     render();
   }
 </script>

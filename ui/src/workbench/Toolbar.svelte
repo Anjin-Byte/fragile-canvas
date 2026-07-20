@@ -3,19 +3,61 @@
    * Workbench toolbar — transport controls, ROM loading, layout reset.
    * Shortcuts (wired in Workbench): F5 run/pause, F10 step, F6 frame.
    */
+  import type { Snippet, Component } from "svelte";
   import {
     Play, Pause, StepForward, SkipForward, RotateCcw,
-    Upload, Gamepad2, ChevronDown, LayoutGrid,
+    FolderOpen, Gamepad2, ChevronDown,
+    Cpu, Code, MemoryStick, Grid3x3, Music, Gauge, Volume2, VolumeX,
+    FastForward, Command as CommandIcon, Settings,
   } from "lucide-svelte";
   import type { EmuController } from "./emu.svelte.js";
+  import type { Command } from "./commands.svelte.js";
 
   let {
     emu,
-    onresetlayout,
+    commands,
+    layouts,
+    openPalette,
+    openPreferences,
   }: {
     emu: EmuController;
-    onresetlayout: () => void;
+    /** Command registry — panel toggles, machine + audio render as inline buttons. */
+    commands: Command[];
+    /** Right-side layout control (the LayoutsMenu). */
+    layouts?: Snippet;
+    /** Open the command palette (Cmd+K). */
+    openPalette?: () => void;
+    /** Open the preferences dialog. */
+    openPreferences?: () => void;
   } = $props();
+
+  // Panel id → toolbar icon (Screen is permanent, so it has no toggle).
+  const PANEL_ICON: Record<string, Component> = {
+    cpu: Cpu, disasm: Code, memory: MemoryStick,
+    ppu: Grid3x3, apu: Music, io: Gauge,
+  };
+
+  // Visible panel-visibility toggles (permanent panels report enabled()===false).
+  const viewButtons = $derived(
+    commands
+      .filter((c) => c.group === "View" && c.kind === "toggle" && (c.enabled ? c.enabled() : true))
+      .map((c) => ({ cmd: c as Extract<Command, { kind: "toggle" }>, icon: PANEL_ICON[c.id.replace(/^view\./, "")] })),
+  );
+  const volumeCmd = $derived(
+    commands.find((c): c is Extract<Command, { kind: "value" }> => c.id === "audio.volume"),
+  );
+  const muteCmd = $derived(
+    commands.find((c): c is Extract<Command, { kind: "toggle" }> => c.id === "audio.mute"),
+  );
+  const audioOn = $derived(!!volumeCmd && (volumeCmd.enabled ? volumeCmd.enabled() : true));
+
+  // Machine cluster: speed presets + fast-forward + boot ROM.
+  const speedCmd = $derived(
+    commands.find((c): c is Extract<Command, { kind: "choice" }> => c.id === "machine.speed"),
+  );
+  const turboCmd = $derived(
+    commands.find((c): c is Extract<Command, { kind: "toggle" }> => c.id === "machine.turbo"),
+  );
 
   let fileInput = $state<HTMLInputElement>();
   let romMenuOpen = $state(false);
@@ -76,6 +118,76 @@
     ><RotateCcw size={13} /></button>
   </div>
 
+  <!-- Panel visibility toggles (active = open; click to show/hide). -->
+  {#if viewButtons.length > 0}
+    <div class="tb-divider"></div>
+    <div class="tb-panels">
+      {#each viewButtons as vb (vb.cmd.id)}
+        {@const Icon = vb.icon}
+        <button
+          class="tb-btn"
+          class:active={vb.cmd.checked()}
+          title={vb.cmd.label}
+          aria-pressed={vb.cmd.checked()}
+          onclick={() => vb.cmd.run()}
+        >
+          {#if Icon}<Icon size={14} />{:else}{vb.cmd.label}{/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  <!-- Master volume: mute button + inline slider. -->
+  {#if audioOn && volumeCmd && muteCmd}
+    <div class="tb-divider"></div>
+    <div class="tb-volume">
+      <button
+        class="tb-btn"
+        title={muteCmd.checked() ? "Unmute" : "Mute"}
+        aria-pressed={muteCmd.checked()}
+        onclick={() => muteCmd.run()}
+      >
+        {#if muteCmd.checked()}<VolumeX size={14} />{:else}<Volume2 size={14} />{/if}
+      </button>
+      <input
+        class="tb-vol"
+        type="range"
+        min={volumeCmd.min}
+        max={volumeCmd.max}
+        step={volumeCmd.step}
+        value={volumeCmd.value()}
+        disabled={muteCmd.checked()}
+        aria-label="Master volume"
+        oninput={(e) => volumeCmd.set(+e.currentTarget.value)}
+      />
+    </div>
+  {/if}
+
+  <!-- Machine: speed presets + fast-forward. -->
+  {#if speedCmd && turboCmd}
+    <div class="tb-divider"></div>
+    <div class="tb-machine">
+      <div class="tb-seg" role="group" aria-label="Emulation speed">
+        {#each speedCmd.options as opt (opt.value)}
+          <button
+            class="tb-seg-btn"
+            class:active={speedCmd.value() === opt.value}
+            title={`Speed ${opt.label}`}
+            onclick={() => speedCmd.select(opt.value)}
+          >{opt.label}</button>
+        {/each}
+      </div>
+      <button
+        class="tb-btn"
+        class:active={turboCmd.checked()}
+        title="Fast-forward"
+        aria-pressed={turboCmd.checked()}
+        disabled={turboCmd.enabled ? !turboCmd.enabled() : false}
+        onclick={() => turboCmd.run()}
+      ><FastForward size={14} /></button>
+    </div>
+  {/if}
+
   <div class="spacer"></div>
 
   <input
@@ -86,7 +198,7 @@
     onchange={onFileSelect}
   />
   <button class="tb-btn tb-btn-labeled" title="Load a ROM file" onclick={() => fileInput?.click()}>
-    <Upload size={13} /> Open
+    <FolderOpen size={13} /> Open
   </button>
 
   <div class="rom-menu" bind:this={menuEl}>
@@ -115,9 +227,21 @@
     {/if}
   </div>
 
-  <button class="tb-btn" title="Reset panel layout" onclick={onresetlayout}>
-    <LayoutGrid size={13} />
-  </button>
+  {@render layouts?.()}
+
+  <div class="tb-divider"></div>
+  <button
+    class="tb-btn"
+    title="Command palette (⌘K)"
+    aria-label="Command palette"
+    onclick={() => openPalette?.()}
+  ><CommandIcon size={14} /></button>
+  <button
+    class="tb-btn"
+    title="Preferences"
+    aria-label="Preferences"
+    onclick={() => openPreferences?.()}
+  ><Settings size={15} /></button>
 </header>
 
 <style>
@@ -185,6 +309,81 @@
 
   .tb-btn.accent {
     color: var(--interactive);
+  }
+
+  /* Panel toggle in the "open" state. */
+  .tb-btn.active {
+    color: var(--interactive);
+    background: var(--interactive-fill);
+  }
+
+  .tb-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--stroke-mid);
+    margin: 0 2px;
+    flex-shrink: 0;
+  }
+
+  .tb-panels {
+    display: flex;
+    gap: 1px;
+  }
+
+  .tb-volume {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tb-machine {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  /* Segmented speed presets — a grouped pill like .transport. */
+  .tb-seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--fill-lo);
+    border-radius: var(--radius-sm);
+  }
+
+  .tb-seg-btn {
+    min-width: 24px;
+    height: 20px;
+    padding: 0 5px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-subtle);
+    background: none;
+    border: none;
+    border-radius: calc(var(--radius-sm) - 1px);
+    cursor: pointer;
+    transition: color 0.1s ease, background 0.1s ease;
+  }
+
+  .tb-seg-btn:hover {
+    color: var(--text-hi);
+  }
+
+  .tb-seg-btn.active {
+    color: var(--interactive);
+    background: var(--interactive-fill);
+  }
+
+  .tb-vol {
+    width: 68px;
+    accent-color: var(--interactive);
+    cursor: pointer;
+  }
+
+  .tb-vol:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   .tb-btn-text {

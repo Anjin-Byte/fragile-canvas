@@ -90,6 +90,15 @@ impl Session {
         Ok(self.load_rom(rom.data))
     }
 
+    /// Load a bundled ROM by id, skipping the boot ROM (starts at PC=0x0100).
+    pub fn load_bundled_rom_no_boot(&mut self, id: &str) -> Result<CpuSnapshot, &'static str> {
+        let rom = crate::BUNDLED_ROMS
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or("unknown bundled ROM id")?;
+        Ok(self.load_rom_no_boot(rom.data))
+    }
+
     /// Step by N M-cycles (manual stepping, ignores governor).
     pub fn step(&mut self, m_cycles: u32) -> Result<CpuSnapshot, &'static str> {
         let gb = self.gb.as_mut().ok_or("no ROM loaded")?;

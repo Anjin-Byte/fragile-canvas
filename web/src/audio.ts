@@ -6,7 +6,11 @@
 export class AudioManager {
   private ctx: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
+  private gainNode: GainNode | null = null;
   private started = false;
+  // Desired master gain, retained so a value set before the (lazy) init
+  // survives and is applied when the graph is built.
+  private volume = 1;
 
   async init(): Promise<void> {
     if (this.ctx) return;
@@ -20,9 +24,19 @@ export class AudioManager {
     this.workletNode = new AudioWorkletNode(this.ctx, "gameboy-audio-processor", {
       outputChannelCount: [2],
     });
-    this.workletNode.connect(this.ctx.destination);
+    // worklet → gain → destination, so master volume is a single dial.
+    this.gainNode = this.ctx.createGain();
+    this.gainNode.gain.value = this.volume;
+    this.workletNode.connect(this.gainNode);
+    this.gainNode.connect(this.ctx.destination);
 
     this.started = true;
+  }
+
+  /** Master output volume, 0–1. Retained across lazy init. */
+  setVolume(volume: number): void {
+    this.volume = Math.max(0, Math.min(1, volume));
+    if (this.gainNode) this.gainNode.gain.value = this.volume;
   }
 
   // Push interleaved f32 samples (L,R,L,R...) to the worklet.

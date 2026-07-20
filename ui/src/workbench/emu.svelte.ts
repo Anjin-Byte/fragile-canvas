@@ -13,6 +13,26 @@ const BREAKPOINTS_KEY = "fc-breakpoints";
 /** M-cycles per DMG frame (70224 T-cycles / 4). */
 export const MCYCLES_PER_FRAME = 17556;
 
+/** Effective multiplier while fast-forward (turbo) is held on. */
+export const TURBO_FACTOR = 8;
+/**
+ * Ceiling on the wall-time handed to a single `tickFrame`, in ns. The clock
+ * governor runs *every* cycle it's asked for (no internal cap), so this bounds
+ * the synchronous work per tick — protecting against turbo/high-speed and
+ * against catch-up bursts after a tab stall.
+ */
+export const MAX_TICK_NS = 100_000_000; // 100 ms ≈ 6 frames of work
+
+/**
+ * Wall-time (ms) scaled by the speed multiplier → clamped tick nanoseconds.
+ * The clamp bounds the synchronous work per tick (the clock governor runs
+ * every cycle it's given) and guards against negative/NaN dt.
+ */
+export function scaledTickNs(dtMs: number, factor: number): bigint {
+  const ns = Math.min(dtMs * 1_000_000 * factor, MAX_TICK_NS);
+  return BigInt(Math.round(Math.max(0, ns) || 0));
+}
+
 export class EmuController {
   readonly backend: EmulatorBackend;
 
@@ -30,6 +50,15 @@ export class EmuController {
    * this is the durable UI state it will consume.
    */
   breakpoints = $state(new SvelteSet<number>());
+  /** Fast-forward — reactive so the toolbar button reflects it. */
+  turbo = $state(false);
+  /**
+   * Base speed multiplier (from Settings via an applier). Plain field: it is
+   * read inside the RAF closure, not in a reactive context.
+   */
+  speedFactor = 1;
+  /** Skip the boot ROM on load (from Settings via an applier). */
+  skipBoot = false;
   /**
    * Cross-panel request to reveal an address in the Memory panel. The seq
    * counter lets each consumer (MemoryPanel navigates, Workbench activates
@@ -80,12 +109,30 @@ export class EmuController {
 
   async loadRomBytes(data: ArrayBuffer): Promise<void> {
     this.#lastRom = { kind: "bytes", data };
-    await this.#load(() => this.backend.loadRom(new Uint8Array(data)));
+    await this.#load(() => this.#loadFileBackend(data));
   }
 
   async loadBundled(id: string): Promise<void> {
     this.#lastRom = { kind: "bundled", id };
-    await this.#load(() => this.backend.loadBundledRom(id));
+    await this.#load(() => this.#loadBundledBackend(id));
+  }
+
+  /** Load file-ROM bytes, honoring `skipBoot`. */
+  #loadFileBackend(data: ArrayBuffer): Promise<CpuState> {
+    const bytes = new Uint8Array(data);
+    return this.skipBoot ? this.backend.loadRomNoBoot(bytes) : this.backend.loadRom(bytes);
+  }
+
+  /**
+   * Load a bundled ROM, honoring `skipBoot`. Falls back to the boot path when
+   * the backend has no no-boot bundled variant (e.g. desktop until its Tauri
+   * command lands).
+   */
+  #loadBundledBackend(id: string): Promise<CpuState> {
+    if (this.skipBoot && this.backend.loadBundledRomNoBoot) {
+      return this.backend.loadBundledRomNoBoot(id);
+    }
+    return this.backend.loadBundledRom(id);
   }
 
   async #load(loader: () => Promise<CpuState>): Promise<void> {
@@ -125,7 +172,10 @@ export class EmuController {
         this.#fpsLast = now;
       }
 
-      const elapsedNs = BigInt(Math.round(dt * 1_000_000));
+      // Scale wall-time by the speed multiplier (turbo overrides the base),
+      // then clamp so one tick can't run an unbounded number of cycles.
+      const factor = this.turbo ? TURBO_FACTOR : this.speedFactor;
+      const elapsedNs = scaledTickNs(dt, factor);
       this.backend
         .tickFrame(elapsedNs)
         .then(async (state) => {
@@ -223,9 +273,9 @@ export class EmuController {
       await this.backend.reset();
       const last = this.#lastRom;
       if (last.kind === "bytes") {
-        await this.#load(() => this.backend.loadRom(new Uint8Array(last.data)));
+        await this.#load(() => this.#loadFileBackend(last.data));
       } else {
-        await this.#load(() => this.backend.loadBundledRom(last.id));
+        await this.#load(() => this.#loadBundledBackend(last.id));
       }
     } catch (e) {
       this.error = String(e);
