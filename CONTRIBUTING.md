@@ -1,8 +1,6 @@
 # Contributing to Okra
 
-Thanks for your interest! Okra is a Game Boy (DMG) emulator with a built-in debugger workbench. Bug reports, issues, and pull requests are all welcome.
-
-By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
+Thanks for your interest! Okra is a Game Boy (DMG) emulator with a built-in debugger. Bug reports and pull requests are welcome.
 
 > The project was codenamed **fragile-canvas**, and that name still appears in some crate/package identifiers (`@fragile-canvas/ui`, `fragile-canvas-wasm`, the `cli` crate, the Tauri bundle id). That's expected — there's no need to rename them.
 
@@ -15,7 +13,7 @@ By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md
 ## Workspace layout
 
 Rust workspace crates: `sm83` (core), `sm83-isa` (assembler/disassembler), `cli`, `wasm`, `desktop/src-tauri`.
-Front-end packages: `ui` (shared Svelte 5 UI + the Workbench), `phi` (component toolkit), `web` (Vite/WASM), `desktop` (Tauri). The full map is in the [README](README.md#project-structure).
+Front-end packages: `ui` (shared Svelte UI), `phi` (components), `web` (Vite/WASM), `desktop` (Tauri). The full map is in the [README](README.md#layout).
 
 `web` and `desktop` consume `ui` and `phi` from source (via `file:` links), so each has its own `node_modules`.
 
@@ -72,4 +70,4 @@ Please keep the `cpu_instrs` and timing suites green. If you're improving accura
 3. Make sure `make test` passes and the web build is clean (`cd web && npm run build`).
 4. For UI changes, a screenshot or short clip helps a lot.
 
-Not sure where to start? The [roadmap](README.md#roadmap) lists open areas — breakpoint enforcement, the two failing Blargg timing tests (`halt_bug`, `interrupt_time`), the PPU tile/OAM views, and save states are all good first issues.
+Not sure where to start? A few open areas: breakpoint enforcement, the two failing Blargg timing tests (`halt_bug`, `interrupt_time`), the PPU tile/OAM views, and save states.
