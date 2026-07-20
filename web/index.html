@@ -3,8 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Favicon: SVG for modern browsers; PNG + apple-touch for Safari, which
+         is unreliable with SVG favicons and prefers a raster/apple-touch icon. -->
     <link rel="icon" type="image/svg+xml" href="/okra.svg" />
-    <!-- Tint the browser chrome (Safari/Chrome) to match the app's top bar. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/okra-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Tint the browser chrome (Safari tab bar). NB: Safari adjusts the value
+         in dark mode, so it won't render as this exact hex. -->
     <meta name="theme-color" content="#07090c" />
     <meta name="color-scheme" content="dark" />
     <title>Okra</title>

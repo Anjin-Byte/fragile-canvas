@@ -4,7 +4,7 @@ import wasm from 'vite-plugin-wasm'
 
 export default defineConfig({
   plugins: [svelte(), wasm()],
-  base: process.env.GITHUB_ACTIONS ? '/fragile-canvas/' : '/',
+  base: process.env.GITHUB_ACTIONS ? '/okra-emu/' : '/',
   server: {
     fs: {
       allow: [

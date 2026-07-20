@@ -18,17 +18,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 22px;
+    height: 20px;
     background: var(--surface-0);
-    border-top: 1px solid var(--stroke-lo);
     flex-shrink: 0;
     user-select: none;
   }
 
   .footer-text {
     font-family: var(--font-sans);
-    font-size: 10.5px;
-    letter-spacing: 0.01em;
+    font-size: 10px;
+    letter-spacing: 0.03em;
     color: var(--text-faint);
+    opacity: 0.75;
   }
 </style>

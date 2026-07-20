@@ -1,4 +1,6 @@
-# fragile-canvas ([demo](https://anjin-byte.github.io/fragile-canvas/))
+# Okra ([demo](https://anjin-byte.github.io/okra-emu/))
+
+> Formerly codenamed *fragile-canvas* — the legacy name still appears in package/crate identifiers.
 
 Game Boy (DMG) emulator. The SM83 CPU is modeled as a microcode engine:
 each opcode is decoded into a sequence of primitive `MicroOp`s
