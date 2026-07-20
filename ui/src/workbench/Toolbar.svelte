@@ -80,7 +80,7 @@
 </script>
 
 <header class="toolbar">
-  <span class="brand">fragile-canvas</span>
+  <span class="brand">Okra</span>
 
   <div class="transport">
     <button

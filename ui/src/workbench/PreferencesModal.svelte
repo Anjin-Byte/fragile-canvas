@@ -84,7 +84,7 @@
         {#if speedCmd && bootCmd}
           <Section sectionId="prefs-emulation" title="Emulation">
             <div class="pf-controls">
-              <div class="pf-row">
+              <div class="pf-field">
                 <span class="pf-label">Speed</span>
                 <ToggleGroup
                   label="Emulation speed"
@@ -195,11 +195,10 @@
     padding: 8px 0 4px;
   }
 
-  .pf-row {
+  .pf-field {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    gap: 7px;
   }
 
   .pf-label {

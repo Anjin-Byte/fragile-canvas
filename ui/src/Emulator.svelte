@@ -296,7 +296,7 @@
   {#if !loaded}
     <!-- ── Hero state ── -->
     <div class="hero">
-      <h1 class="hero-title">fragile-canvas</h1>
+      <h1 class="hero-title">Okra</h1>
 
       <input
         bind:this={fileInput}

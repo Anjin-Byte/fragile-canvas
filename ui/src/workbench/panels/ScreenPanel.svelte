@@ -64,7 +64,6 @@
 
   {#if !emu.romLoaded}
     <div class="hero">
-      <!-- <span class="hero-title">fragile-canvas</span> -->
       <input
         bind:this={fileInput}
         type="file"
