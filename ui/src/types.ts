@@ -25,6 +25,59 @@ export interface DisasmLine {
   len: number;
 }
 
+/**
+ * A code location a breakpoint anchors to. Line-anchored bps (set in the
+ * editor) follow source edits and re-map on re-assemble; address-anchored bps
+ * (set in the disassembly / a file ROM with no source) stay at their address.
+ * The source map bridges the two; both project into either gutter.
+ */
+export type Location = { kind: "line"; line: number } | { kind: "addr"; addr: number };
+
+/** One emitted source line → the byte range it produced. */
+export interface SrcSpan {
+  /** 1-based source line. */
+  line: number;
+  addr: number;
+  len: number;
+}
+
+export interface AsmDiagnostic {
+  /** 1-based source line (0 = whole-program). */
+  line: number;
+  msg: string;
+}
+
+export interface AssembleResult {
+  ok: boolean;
+  /** Lowest segment address of the flattened image, or null if empty. */
+  origin: number | null;
+  /** Flattened image (ORG gaps NOP-filled), or null if nothing assembled. */
+  bytes: number[] | null;
+  /** User labels / EQUs → value. */
+  symbols: Record<string, number>;
+  diagnostics: AsmDiagnostic[];
+  /** One span per emitting source line, in source order. */
+  sourceMap: SrcSpan[];
+}
+
+export type StopReason = "halt" | "breakpoint" | "leftRange" | "selfLoop" | "budget";
+
+/** Result of a bounded snippet run: the final CPU state + why it stopped. */
+export interface RunResult {
+  state: CpuState;
+  stopReason: StopReason;
+  steps: number;
+}
+
+/** Result of a real-time slice (`tickFrameUntil`) that may stop at a breakpoint. */
+export interface TickResult {
+  state: CpuState;
+  /** Stopped at an enforced breakpoint (paused before executing it). */
+  hit: boolean;
+  /** Instructions executed this slice. */
+  steps: number;
+}
+
 export interface EmulatorBackend {
   loadRom(cartRom: Uint8Array): Promise<CpuState>;
   /** Load a ROM skipping the boot ROM (starts at PC=0x0100). */
@@ -45,6 +98,13 @@ export interface EmulatorBackend {
    *  gain stage omit it (the Audio menu then shows disabled). */
   setMasterVolume?(volume: number): void;
   tickFrame(elapsedNs: bigint): Promise<CpuState>;
+  /** Governed real-time tick that stops at an enforced breakpoint. Optional —
+   *  backends without it (desktop) fall back to `tickFrame` (no enforcement). */
+  tickFrameUntil?(
+    elapsedNs: bigint,
+    breakpoints: Uint16Array,
+    exemptFirst: boolean,
+  ): Promise<TickResult>;
   /** Set joypad button state. action: A=1,B=2,Select=4,Start=8. direction: Right=1,Left=2,Up=4,Down=8. */
   setButtons(action: number, direction: number): Promise<void>;
   resetGovernor(): Promise<void>;
@@ -58,4 +118,12 @@ export interface EmulatorBackend {
    *  backends without the sm83-isa export omit it and the DisasmPanel
    *  falls back to its placeholder. */
   disassemble?(addr: number, count: number): Promise<DisasmLine[]>;
+  /** Assemble SM83 source → bytes + diagnostics + source map. Needs no ROM.
+   *  Optional — web implements it; desktop may omit. */
+  assemble?(source: string): Promise<AssembleResult>;
+  /** Load assembled bytes into a fresh boot-skipped machine, PC=entry. */
+  loadCode?(origin: number, bytes: Uint8Array, entry: number): Promise<CpuState>;
+  /** Run from the current PC to a stop condition, enforcing the given
+   *  breakpoint addresses. Returns the final state + why it stopped. */
+  runCode?(budget: number, breakpoints: Uint16Array, lo: number, hi: number): Promise<RunResult>;
 }

@@ -229,7 +229,10 @@ fn imm8_from(n: i32, what: &str) -> Result<Operand, ParseError> {
 }
 
 fn imm16_from(n: i32, what: &str) -> Result<Operand, ParseError> {
-    if (0..=0xFFFF).contains(&n) {
+    // Accept unsigned $0000-$FFFF and signed -32768..-1 (two's complement),
+    // mirroring `imm8_from` — so `LD BC, -1` folds to $FFFF just as `LD A, -1`
+    // folds to $FF, instead of being rejected.
+    if (-0x8000..=0xFFFF).contains(&n) {
         Ok(Operand::Imm16(n as u16))
     } else {
         err(format!("{what} out of 16-bit range: {n}"))

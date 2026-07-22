@@ -33,6 +33,19 @@ impl std::fmt::Display for Diagnostic {
 
 // ─── Output ─────────────────────────────────────────────────────────────────
 
+/// One emitted source line → the byte range it produced. Lets a consumer map a
+/// runtime PC back to a source line (the span where `addr ≤ pc < addr+len`) and
+/// a source line to its address. Only lines that emit bytes get a span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SrcSpan {
+    /// 1-based source line (same basis as `Diagnostic.line`).
+    pub line: usize,
+    /// Start address of the bytes this line emitted.
+    pub addr: u16,
+    /// Number of bytes emitted (instruction length, DB/DW/DS width).
+    pub len: u16,
+}
+
 #[derive(Debug, Default)]
 pub struct Assembled {
     /// Contiguous byte runs keyed by start address (ORG starts a new one).
@@ -42,6 +55,8 @@ pub struct Assembled {
     /// Address/bytes/source listing (pass-2 view).
     pub listing: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// Source map: one span per emitting line, in source order.
+    pub map: Vec<SrcSpan>,
 }
 
 impl Assembled {
@@ -152,8 +167,13 @@ fn split_db_items(s: &str) -> Vec<&str> {
 fn parse_operand_ast(s: &str) -> Result<OpAst, String> {
     // The value-level grammar first: registers, conditions, (HL)-family,
     // ($FF00+n), @±disp, SP±n, plain numbers.
-    if let Ok(raw) = parse_raw_operand(s) {
-        return Ok(OpAst::Raw(raw));
+    match parse_raw_operand(s) {
+        Ok(raw) => return Ok(OpAst::Raw(raw)),
+        // An `SP±n` operand unambiguously belongs to this grammar, so surface
+        // its error (e.g. an out-of-range offset) instead of masking it as an
+        // "undefined symbol 'SP'" once the expression fallback treats SP as one.
+        Err(e) if is_sp_relative(s) => return Err(e.to_string()),
+        Err(_) => {}
     }
     // Fall back to expressions: `(expr)`/`[expr]` is a memory operand,
     // anything else a value operand.
@@ -165,6 +185,13 @@ fn parse_operand_ast(s: &str) -> Result<OpAst, String> {
         return parse_expr(inner).map(OpAst::Mem).map_err(|e| e.0);
     }
     parse_expr(s).map(OpAst::Expr).map_err(|e| e.0)
+}
+
+/// `SP+n` / `SP-n` (whitespace-insensitive) — the `LD HL, SP±e` operand form.
+fn is_sp_relative(s: &str) -> bool {
+    let compact: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    let up = compact.to_ascii_uppercase();
+    up.starts_with("SP+") || up.starts_with("SP-")
 }
 
 fn parse_line(no: usize, raw_line: &str) -> Result<Line, String> {
@@ -533,6 +560,7 @@ pub fn assemble(source: &str) -> Assembled {
             if seg_start.is_none() {
                 seg_start = Some(addr);
             }
+            out.map.push(SrcSpan { line: line.no, addr, len: bytes.len() as u16 });
             let hex: Vec<String> = bytes.iter().take(6).map(|b| format!("{b:02X}")).collect();
             let more = if bytes.len() > 6 { "…" } else { "" };
             listing.push_str(&format!(

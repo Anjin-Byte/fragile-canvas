@@ -8,8 +8,42 @@
 use crate::clock::ClockGovernor;
 use crate::cpu::registers::{Reg8, Reg16};
 use crate::memory::bus::Bus;
+use crate::memory::cartridge::Cartridge;
 use crate::system::GameBoy;
 use crate::trace::Tracer;
+
+/// Why a bounded snippet run (`run_code`) stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    /// The CPU executed `HALT`.
+    Halt,
+    /// PC reached an enforced breakpoint address.
+    Breakpoint,
+    /// PC left the loaded code range `[origin, end)`.
+    LeftRange,
+    /// The instruction jumped to itself (`jr $` / `jp $`) — a terminal loop.
+    SelfLoop,
+    /// The instruction budget was exhausted.
+    Budget,
+}
+
+/// Result of a bounded snippet run.
+pub struct RunResult {
+    pub snapshot: CpuSnapshot,
+    pub reason: StopReason,
+    pub steps: u32,
+}
+
+/// Result of a real-time slice (`tick_frame_until`) that may stop early at a
+/// breakpoint.
+pub struct TickResult {
+    pub snapshot: CpuSnapshot,
+    /// True iff the slice stopped BEFORE executing an instruction whose PC is
+    /// an enforced breakpoint (the machine is now paused at that PC).
+    pub hit: bool,
+    /// Instructions actually executed this slice.
+    pub steps: u32,
+}
 
 /// Snapshot of CPU register state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,8 +290,15 @@ impl Session {
     /// so execution starts at PC=0x0100.  This saves ~2.2M M-cycles of
     /// boot ROM logo animation per load.
     pub fn load_rom_no_boot(&mut self, cart_rom: &[u8]) -> CpuSnapshot {
+        self.boot_skipped_with_cart(Cartridge::new(cart_rom))
+    }
+
+    /// Bring the machine up in the exact DMG post-boot state with `cart`
+    /// installed and the boot ROM skipped (PC=0x0100). Shared by
+    /// `load_rom_no_boot` and `load_code`.
+    fn boot_skipped_with_cart(&mut self, cart: Cartridge) -> CpuSnapshot {
         let mut bus = Bus::new();
-        bus.load_cartridge(cart_rom);
+        bus.install_cartridge(cart);
         // Unmap the boot ROM (write bit 0 to 0xFF50)
         bus.write(0xFF50, 0x01);
 
@@ -287,6 +328,126 @@ impl Session {
         self.gb = Some(gb);
         self.gov = ClockGovernor::new();
         snap
+    }
+
+    /// Assemble output → a fresh boot-skipped ROM-only machine with the flattened
+    /// `bytes` placed at `origin` and PC set to `entry`. `origin + bytes.len()`
+    /// must fit the 32 KiB ROM window. Header bytes are not parsed, so code may
+    /// occupy 0x0147/0x0148 without changing the MBC or ROM size.
+    pub fn load_code(
+        &mut self,
+        origin: u16,
+        bytes: &[u8],
+        entry: u16,
+    ) -> Result<CpuSnapshot, &'static str> {
+        if origin as usize + bytes.len() > 0x8000 {
+            return Err("code exceeds the 32 KiB ROM window");
+        }
+        let mut image = vec![0xFFu8; 0x8000];
+        let start = origin as usize;
+        image[start..start + bytes.len()].copy_from_slice(bytes);
+        self.boot_skipped_with_cart(Cartridge::rom_only(&image));
+        if let Some(gb) = self.gb.as_mut() {
+            gb.cpu.register_file.set_16bit(Reg16::PC, entry);
+        }
+        self.cpu_snapshot()
+    }
+
+    /// Run from the current PC until a stop condition, one full instruction per
+    /// step. `[lo, hi)` is the loaded code range; leaving it stops. Enforces the
+    /// given breakpoint addresses (checked before each instruction; the entry
+    /// instruction is exempt so a resume makes progress). Returns why it stopped.
+    pub fn run_code(
+        &mut self,
+        budget: u32,
+        breakpoints: &[u16],
+        lo: u16,
+        hi: u16,
+    ) -> Result<RunResult, &'static str> {
+        let gb = self.gb.as_mut().ok_or("no ROM loaded")?;
+        let mut steps: u32 = 0;
+        let reason = loop {
+            let pc = gb.cpu.register_file.get_16bit(Reg16::PC);
+            if gb.cpu.halted {
+                break StopReason::Halt;
+            }
+            if Self::is_breakpoint(pc, breakpoints, steps == 0) {
+                break StopReason::Breakpoint;
+            }
+            if pc < lo || pc >= hi {
+                break StopReason::LeftRange;
+            }
+            if steps >= budget {
+                break StopReason::Budget;
+            }
+            gb.tick();
+            steps += 1;
+            if gb.cpu.register_file.get_16bit(Reg16::PC) == pc {
+                break StopReason::SelfLoop; // jr $ / jp $ — terminal self-loop
+            }
+        };
+        Ok(RunResult {
+            snapshot: snapshot(gb),
+            reason,
+            steps,
+        })
+    }
+
+    /// The single breakpoint rule both engines share: PC is an enforced
+    /// breakpoint, unless it's the exempt first instruction of a run (so a
+    /// resume makes progress instead of instantly re-tripping the breakpoint it
+    /// paused on).
+    #[inline]
+    fn is_breakpoint(pc: u16, breakpoints: &[u16], is_first: bool) -> bool {
+        !is_first && breakpoints.contains(&pc)
+    }
+
+    /// Governed real-time tick that honors breakpoints (the free-run break
+    /// engine). Converts `elapsed_ns` to a T-cycle budget, then executes whole
+    /// instructions until the budget is spent (`hit=false`) or PC reaches an
+    /// enforced breakpoint (`hit=true`, paused *before* executing it).
+    ///
+    /// `exempt_first` skips the breakpoint check for the first executed
+    /// instruction (used on resume). Empty `breakpoints` takes a zero-overhead
+    /// fast path identical to [`tick_frame`](Self::tick_frame). Unlike
+    /// `run_code`, HALT / self-loops / leaving any range are NORMAL here — only
+    /// a breakpoint pauses (every real ROM HALTs each frame and sits in
+    /// wait-loops).
+    pub fn tick_frame_until(
+        &mut self,
+        elapsed_ns: u64,
+        breakpoints: &[u16],
+        exempt_first: bool,
+    ) -> Result<TickResult, &'static str> {
+        let gb = self.gb.as_mut().ok_or("no ROM loaded")?;
+        let cycles = self.gov.cycles_due(elapsed_ns);
+
+        // Zero-breakpoint fast path: one blast, identical to `tick_frame`.
+        if breakpoints.is_empty() {
+            if cycles > 0 {
+                gb.tick_t(cycles);
+            }
+            return Ok(TickResult { snapshot: snapshot(gb), hit: false, steps: 0 });
+        }
+
+        let mut spent: u32 = 0;
+        let mut executed: u32 = 0;
+        let hit = loop {
+            if spent >= cycles {
+                break false;
+            }
+            let pc = gb.cpu.register_file.get_16bit(Reg16::PC);
+            let is_first = exempt_first && executed == 0;
+            // Don't stop while parked in HALT (PC is frozen post-HALT): let
+            // cycles pass so the waking interrupt can fire. We break only when
+            // execution truly arrives at that PC.
+            if !gb.cpu.halted && Self::is_breakpoint(pc, breakpoints, is_first) {
+                break true;
+            }
+            spent += gb.tick() as u32;
+            executed += 1;
+        };
+        Ok(TickResult { snapshot: snapshot(gb), hit, steps: executed })
     }
 
     /// Start logging all bus accesses to `addr` (reads/writes/internal sets).
@@ -451,6 +612,60 @@ mod tests {
     }
 
     #[test]
+    fn load_code_runs_snippet_to_halt() {
+        let mut s = Session::new();
+        // LD A,$05 ; INC A ; LD B,A ; HALT   placed at 0x0150.
+        let code = [0x3E, 0x05, 0x3C, 0x47, 0x76];
+        s.load_code(0x0150, &code, 0x0150).unwrap();
+        let r = s
+            .run_code(1000, &[], 0x0150, 0x0150 + code.len() as u16)
+            .unwrap();
+        assert_eq!(r.reason, StopReason::Halt);
+        assert_eq!(r.snapshot.af >> 8, 0x06); // A = 5 + 1
+        assert_eq!(r.snapshot.bc >> 8, 0x06); // B = A
+        assert_eq!(r.steps, 4);
+    }
+
+    #[test]
+    fn run_code_self_loop_returns_immediately() {
+        let mut s = Session::new();
+        // jr $ (18 FE) jumps to itself — must stop at once, not spin the budget.
+        s.load_code(0x0150, &[0x18, 0xFE], 0x0150).unwrap();
+        let r = s.run_code(1_000_000, &[], 0x0150, 0x0152).unwrap();
+        assert_eq!(r.reason, StopReason::SelfLoop);
+        assert!(r.steps <= 2, "steps = {}", r.steps);
+    }
+
+    #[test]
+    fn run_code_stops_at_breakpoint() {
+        let mut s = Session::new();
+        // NOP ; NOP ; NOP ; HALT at 0x0150 — breakpoint at 0x0152.
+        s.load_code(0x0150, &[0x00, 0x00, 0x00, 0x76], 0x0150).unwrap();
+        let r = s.run_code(1000, &[0x0152], 0x0150, 0x0154).unwrap();
+        assert_eq!(r.reason, StopReason::Breakpoint);
+        assert_eq!(r.snapshot.pc, 0x0152); // stops before executing the bp instruction
+    }
+
+    #[test]
+    fn load_code_rejects_oversized() {
+        let mut s = Session::new();
+        assert!(s.load_code(0x7FFF, &[0x00, 0x00, 0x00], 0x7FFF).is_err());
+    }
+
+    #[test]
+    fn load_code_ignores_header_bytes_at_origin_zero() {
+        // A program long enough to cover 0x0147/0x0148 must still be ROM-only
+        // and read back verbatim (the rom_only path never parses the header).
+        let mut s = Session::new();
+        let mut code = vec![0x00u8; 0x0200]; // 512 NOPs, covers header region
+        code[0x0147] = 0x19; // would be MBC5 if the header were parsed
+        code[0x0148] = 0x08; // would demand 512 ROM banks if parsed
+        s.load_code(0x0000, &code, 0x0000).unwrap();
+        // Byte at 0x0147 reads back as written (proves rom_only, not MBC5 aliasing).
+        assert_eq!(s.read_memory(0x0147, 1).unwrap(), vec![0x19]);
+    }
+
+    #[test]
     fn load_rom_returns_initial_state() {
         let mut s = Session::new();
         let snap = s.load_default_rom();
@@ -586,5 +801,82 @@ mod tests {
         // After ~1 second of emulated time, PC should be deep into execution
         let snap = s.cpu_snapshot().unwrap();
         assert_ne!(snap.pc, 0x0000);
+    }
+
+    // ─── Real-time break engine (tick_frame_until) ──────────────────────────
+
+    #[test]
+    fn tick_frame_until_stops_before_breakpoint() {
+        let mut s = Session::new();
+        s.load_code(0x0150, &[0x00, 0x00, 0x00, 0x76], 0x0150).unwrap(); // NOP;NOP;NOP;HALT
+        let r = s.tick_frame_until(50_000, &[0x0152], false).unwrap();
+        assert!(r.hit);
+        assert_eq!(r.snapshot.pc, 0x0152); // paused BEFORE executing the bp instruction
+        assert_eq!(r.steps, 2);
+    }
+
+    #[test]
+    fn tick_frame_until_exempt_first_runs_through_entry() {
+        // Breakpoint AT the entry PC, but `exempt_first` → the entry instruction
+        // executes and we do NOT stop on it (resume semantics).
+        let mut s = Session::new();
+        s.load_code(0x0150, &[0x3C, 0x18, 0xFE], 0x0150).unwrap(); // INC A ; JR $
+        let r = s.tick_frame_until(50_000, &[0x0150], true).unwrap();
+        assert!(!r.hit, "the exempted entry breakpoint must not stop the run");
+        assert_eq!(r.snapshot.af >> 8, 0x02, "INC A ran (post-boot A $01 + 1)");
+    }
+
+    #[test]
+    fn tick_frame_until_no_breakpoints_matches_tick_frame() {
+        // The empty-breakpoint fast path is byte-identical to tick_frame.
+        let code = [0x06, 0x00, 0x04, 0x18, 0xFD]; // LD B,0 ; loop: INC B ; JR loop
+        let mut a = Session::new();
+        a.load_code(0x0150, &code, 0x0150).unwrap();
+        let mut b = Session::new();
+        b.load_code(0x0150, &code, 0x0150).unwrap();
+        let ra = a.tick_frame(50_000).unwrap();
+        let rb = b.tick_frame_until(50_000, &[], false).unwrap();
+        assert_eq!(ra, rb.snapshot);
+        assert!(!rb.hit);
+    }
+
+    #[test]
+    fn tick_frame_until_does_not_stop_on_self_loop_or_halt() {
+        // A self-loop is normal in real time (not a stop condition).
+        let mut s = Session::new();
+        s.load_code(0x0150, &[0x18, 0xFE], 0x0150).unwrap(); // JR $
+        assert!(!s.tick_frame_until(50_000, &[0x0999], false).unwrap().hit);
+        // DI;HALT on the stepped path (non-matching bp) must terminate, not spin.
+        let mut s2 = Session::new();
+        s2.load_code(0x0150, &[0xF3, 0x76], 0x0150).unwrap(); // DI ; HALT
+        let r = s2.tick_frame_until(50_000, &[0x0999], false).unwrap();
+        assert!(!r.hit);
+        assert!(r.snapshot.halted);
+    }
+
+    #[test]
+    fn tick_frame_until_zero_budget_is_noop() {
+        let mut s = Session::new();
+        s.load_code(0x0150, &[0x3C, 0x76], 0x0150).unwrap();
+        let before = s.cpu_snapshot().unwrap();
+        let r = s.tick_frame_until(0, &[0x0150], false).unwrap(); // PC is the bp, but budget 0
+        assert_eq!(r.steps, 0);
+        assert!(!r.hit);
+        assert_eq!(r.snapshot, before);
+    }
+
+    #[test]
+    fn tick_frame_until_resume_makes_progress() {
+        let mut s = Session::new();
+        s.load_code(0x0150, &[0x00, 0x3C, 0x76], 0x0150).unwrap(); // NOP ; INC A ; HALT
+        // First slice stops before the bp at 0x0151.
+        let r1 = s.tick_frame_until(50_000, &[0x0151], false).unwrap();
+        assert!(r1.hit);
+        assert_eq!(r1.snapshot.pc, 0x0151);
+        // Resume with exemption → INC A runs, no immediate re-trip, reaches HALT.
+        let r2 = s.tick_frame_until(50_000, &[0x0151], true).unwrap();
+        assert!(!r2.hit);
+        assert_eq!(r2.snapshot.af >> 8, 0x02);
+        assert!(r2.snapshot.halted);
     }
 }

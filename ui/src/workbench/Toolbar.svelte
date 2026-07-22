@@ -8,7 +8,7 @@
     Play, Pause, StepForward, SkipForward, RotateCcw,
     FolderOpen, Gamepad2, ChevronDown,
     Cpu, Code, MemoryStick, Grid3x3, Music, Gauge, Volume2, VolumeX,
-    FastForward, Command as CommandIcon, Settings,
+    FastForward, Command as CommandIcon, Settings, FileCode,
   } from "lucide-svelte";
   import type { EmuController } from "./emu.svelte.js";
   import type { Command } from "./commands.svelte.js";
@@ -33,7 +33,7 @@
 
   // Panel id → toolbar icon (Screen is permanent, so it has no toggle).
   const PANEL_ICON: Record<string, Component> = {
-    cpu: Cpu, disasm: Code, memory: MemoryStick,
+    cpu: Cpu, editor: FileCode, disasm: Code, memory: MemoryStick,
     ppu: Grid3x3, apu: Music, io: Gauge,
   };
 
@@ -103,7 +103,7 @@
       class="tb-btn"
       class:accent={emu.running}
       title={emu.running ? "Pause (F5)" : "Run (F5)"}
-      disabled={!emu.romLoaded}
+      disabled={!emu.canFreeRun}
       onclick={() => emu.toggle()}
     >
       {#if emu.running}<Pause size={13} />{:else}<Play size={13} />{/if}
@@ -133,6 +133,11 @@
       onclick={() => emu.reset()}
     ><RotateCcw size={13} /></button>
   </div>
+
+  <!-- What the transport is driving: a file/bundled ROM or launched editor code. -->
+  {#if emu.machineLabel}
+    <span class="tb-source" title="Currently running">{emu.machineLabel}</span>
+  {/if}
 
   <!-- Panel visibility toggles (active = open; click to show/hide). -->
   {#if viewButtons.length > 0}
@@ -305,6 +310,18 @@
 
   .spacer {
     flex: 1;
+  }
+
+  /* Provenance pill: what the one transport is driving right now. */
+  .tb-source {
+    padding: 2px 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-subtle);
+    background: var(--fill-lo);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    user-select: none;
   }
 
   .tb-btn {

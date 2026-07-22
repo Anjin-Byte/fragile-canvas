@@ -20,8 +20,16 @@ export function speedLabel(n: number): string {
 }
 
 /** Menu groups, in bar order. Only groups with commands render. */
-export type CommandGroup = "File" | "View" | "Machine" | "Audio" | "Display" | "Help";
-export const GROUP_ORDER: CommandGroup[] = ["File", "View", "Machine", "Audio", "Display", "Help"];
+export type CommandGroup = "File" | "View" | "Machine" | "Build" | "Audio" | "Display" | "Help";
+export const GROUP_ORDER: CommandGroup[] = [
+  "File",
+  "View",
+  "Machine",
+  "Build",
+  "Audio",
+  "Display",
+  "Help",
+];
 
 interface Base {
   id: string;
@@ -88,7 +96,8 @@ export function createCommands(ctx: CommandCtx): Command[] {
     id: "machine.run",
     label: "Run / Pause",
     group: "Machine",
-    enabled: () => emu.romLoaded,
+    // Free-run only — an assembled snippet (code mode) runs via Build ▸ Run.
+    enabled: () => emu.canFreeRun,
     checked: () => emu.running,
     run: () => emu.toggle(),
   });
@@ -153,6 +162,35 @@ export function createCommands(ctx: CommandCtx): Command[] {
       settings.save();
       emu.skipBoot = settings.skipBoot;
     },
+  });
+
+  // ── Build: assemble the editor document, then launch/run/check it ──
+  // (all need the sm83-isa export via `canAssemble`)
+  commands.push({
+    kind: "action",
+    id: "build.launch",
+    label: "Launch (real-time)",
+    group: "Build",
+    shortcut: "⌘↵",
+    enabled: () => emu.canAssemble,
+    run: () => void emu.launchCurrent(),
+  });
+  commands.push({
+    kind: "action",
+    id: "build.run",
+    label: "Run to stop (fast)",
+    group: "Build",
+    shortcut: "⌘⇧↵",
+    enabled: () => emu.canAssemble,
+    run: () => void emu.runCurrent(),
+  });
+  commands.push({
+    kind: "action",
+    id: "build.assemble",
+    label: "Assemble (check)",
+    group: "Build",
+    enabled: () => emu.canAssemble,
+    run: () => void emu.assembleCurrent(),
   });
 
   // ── Audio: master volume + mute (backends without setMasterVolume dim) ──

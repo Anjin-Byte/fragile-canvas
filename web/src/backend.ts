@@ -1,8 +1,19 @@
-import type { CpuState, DisasmLine, EmulatorBackend, BundledRomInfo } from "@fragile-canvas/ui";
+import type {
+  CpuState,
+  DisasmLine,
+  EmulatorBackend,
+  BundledRomInfo,
+  AssembleResult,
+  RunResult,
+  TickResult,
+} from "@fragile-canvas/ui";
 import init, { EmulatorWasm } from "../../wasm/pkg/fragile_canvas_wasm";
 import { AudioManager } from "./audio";
 
 let emu: EmulatorWasm | null = null;
+// Dedicated instance for pure assembly (live diagnostics), so it never
+// disturbs the running machine.
+let asmEmu: EmulatorWasm | null = null;
 let initialized = false;
 const audio = new AudioManager();
 
@@ -11,6 +22,17 @@ async function ensureInit() {
     await init();
     initialized = true;
   }
+}
+
+/**
+ * Replace the active emulator with a fresh instance, freeing the previous
+ * one's wasm memory first. Every `new EmulatorWasm()` allocates its own linear
+ * memory; without `free()` each ROM/snippet load leaked the prior machine.
+ */
+function swapEmu(): EmulatorWasm {
+  emu?.free();
+  emu = new EmulatorWasm();
+  return emu;
 }
 
 function drainAndPushAudio() {
@@ -26,7 +48,7 @@ function drainAndPushAudio() {
 export const wasmBackend: EmulatorBackend = {
   async loadRom(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
-    emu = new EmulatorWasm();
+    swapEmu();
     await audio.init();
     await audio.resume();
     return emu.loadRom(cartRom) as CpuState;
@@ -34,7 +56,7 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadRomNoBoot(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
-    emu = new EmulatorWasm();
+    swapEmu();
     await audio.init();
     await audio.resume();
     return emu.loadRomNoBoot(cartRom) as CpuState;
@@ -42,7 +64,7 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadDefaultRom(): Promise<CpuState> {
     await ensureInit();
-    emu = new EmulatorWasm();
+    swapEmu();
     await audio.init();
     await audio.resume();
     return emu.loadDefaultRom() as CpuState;
@@ -58,7 +80,7 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadBundledRom(id: string): Promise<CpuState> {
     await ensureInit();
-    emu = new EmulatorWasm();
+    swapEmu();
     await audio.init();
     await audio.resume();
     // loadBundledRom is available after WASM rebuild; fall back to loadDefaultRom
@@ -70,7 +92,7 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadBundledRomNoBoot(id: string): Promise<CpuState> {
     await ensureInit();
-    emu = new EmulatorWasm();
+    swapEmu();
     await audio.init();
     await audio.resume();
     // Available after a WASM rebuild; fall back to the boot path otherwise.
@@ -105,6 +127,17 @@ export const wasmBackend: EmulatorBackend = {
     const state = emu.tickFrame(elapsedNs) as CpuState;
     drainAndPushAudio();
     return state;
+  },
+
+  async tickFrameUntil(
+    elapsedNs: bigint,
+    breakpoints: Uint16Array,
+    exemptFirst: boolean,
+  ): Promise<TickResult> {
+    if (!emu) throw new Error("no ROM loaded");
+    const res = emu.tickFrameUntil(elapsedNs, breakpoints, exemptFirst) as TickResult;
+    drainAndPushAudio();
+    return res;
   },
 
   async setButtons(action: number, direction: number): Promise<void> {
@@ -148,5 +181,33 @@ export const wasmBackend: EmulatorBackend = {
     // Available after a WASM rebuild; feature-detect like loadBundledRom.
     if (typeof (emu as any).disassemble !== "function") return [];
     return (emu as any).disassemble(addr, count) as DisasmLine[];
+  },
+
+  async assemble(source: string): Promise<AssembleResult> {
+    await ensureInit();
+    // Pure — needs a wasm instance but no loaded ROM. A dedicated instance
+    // keeps live diagnostics from touching the running machine.
+    asmEmu ??= new EmulatorWasm();
+    return asmEmu.assemble(source) as AssembleResult;
+  },
+
+  async loadCode(origin: number, bytes: Uint8Array, entry: number): Promise<CpuState> {
+    await ensureInit();
+    swapEmu(); // fresh machine per Run
+    await audio.init();
+    await audio.resume();
+    return emu.loadCode(origin, bytes, entry) as CpuState;
+  },
+
+  async runCode(
+    budget: number,
+    breakpoints: Uint16Array,
+    lo: number,
+    hi: number,
+  ): Promise<RunResult> {
+    if (!emu) throw new Error("no code loaded");
+    const res = emu.runCode(budget, breakpoints, lo, hi) as RunResult;
+    drainAndPushAudio(); // in case the snippet produced sound
+    return res;
   },
 };

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use sm83::session::{CpuSnapshot, Session};
+use sm83::session::{CpuSnapshot, RunResult, Session, StopReason, TickResult};
 use wasm_bindgen::prelude::*;
 
 #[derive(Serialize)]
@@ -53,6 +53,59 @@ fn to_js(snap: CpuSnapshot) -> Result<JsValue, JsValue> {
 
 fn to_js_result(r: Result<CpuSnapshot, &str>) -> Result<JsValue, JsValue> {
     to_js(r.map_err(|e| JsValue::from_str(e))?)
+}
+
+// ── Assembler seam ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct SrcSpanJs {
+    line: usize,
+    addr: u16,
+    len: u16,
+}
+
+#[derive(Serialize)]
+struct DiagJs {
+    line: usize,
+    msg: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssembleResult {
+    ok: bool,
+    origin: Option<u16>,
+    bytes: Option<Vec<u8>>,
+    symbols: std::collections::BTreeMap<String, f64>,
+    diagnostics: Vec<DiagJs>,
+    source_map: Vec<SrcSpanJs>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunResultJs {
+    state: CpuState,
+    stop_reason: &'static str,
+    steps: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TickResultJs {
+    state: CpuState,
+    /// Stopped at an enforced breakpoint (machine now paused before it).
+    hit: bool,
+    steps: u32,
+}
+
+fn reason_str(r: StopReason) -> &'static str {
+    match r {
+        StopReason::Halt => "halt",
+        StopReason::Breakpoint => "breakpoint",
+        StopReason::LeftRange => "leftRange",
+        StopReason::SelfLoop => "selfLoop",
+        StopReason::Budget => "budget",
+    }
 }
 
 #[wasm_bindgen]
@@ -182,9 +235,87 @@ impl EmulatorWasm {
         serde_wasm_bindgen::to_value(&lines).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Assemble SM83 source → flattened bytes + diagnostics + a line/address
+    /// source map. Pure: needs no loaded ROM.
+    #[wasm_bindgen(js_name = assemble)]
+    pub fn assemble(&self, source: &str) -> Result<JsValue, JsValue> {
+        let a = sm83_isa::asm::assemble(source);
+        let (origin, bytes) = match a.flatten(0x00) {
+            Some((o, b)) => (Some(o), Some(b)),
+            None => (None, None),
+        };
+        let res = AssembleResult {
+            ok: a.ok(),
+            origin,
+            bytes,
+            symbols: a.symbols.iter().map(|(k, &v)| (k.clone(), v as f64)).collect(),
+            diagnostics: a
+                .diagnostics
+                .iter()
+                .map(|d| DiagJs { line: d.line, msg: d.msg.clone() })
+                .collect(),
+            source_map: a
+                .map
+                .iter()
+                .map(|s| SrcSpanJs { line: s.line, addr: s.addr, len: s.len })
+                .collect(),
+        };
+        // `symbols` is a map: force plain-object serialization (serde-wasm-bindgen
+        // emits a JS `Map` by default, which `Object.entries` can't read).
+        res.serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Load assembled bytes into a fresh boot-skipped ROM-only machine, PC=entry.
+    #[wasm_bindgen(js_name = loadCode)]
+    pub fn load_code(&mut self, origin: u16, bytes: &[u8], entry: u16) -> Result<JsValue, JsValue> {
+        to_js_result(self.session.load_code(origin, bytes, entry))
+    }
+
+    /// Run from the current PC to a stop condition; returns { state, stopReason, steps }.
+    #[wasm_bindgen(js_name = runCode)]
+    pub fn run_code(
+        &mut self,
+        budget: u32,
+        breakpoints: &[u16],
+        lo: u16,
+        hi: u16,
+    ) -> Result<JsValue, JsValue> {
+        let r: RunResult = self
+            .session
+            .run_code(budget, breakpoints, lo, hi)
+            .map_err(|e| JsValue::from_str(e))?;
+        let res = RunResultJs {
+            state: r.snapshot.into(),
+            stop_reason: reason_str(r.reason),
+            steps: r.steps,
+        };
+        serde_wasm_bindgen::to_value(&res).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     #[wasm_bindgen(js_name = tickFrame)]
     pub fn tick_frame(&mut self, elapsed_ns: u64) -> Result<JsValue, JsValue> {
         to_js_result(self.session.tick_frame(elapsed_ns))
+    }
+
+    /// Governed real-time tick that honors breakpoints. Runs a frame's worth of
+    /// cycles, stopping early if PC reaches an enforced breakpoint. Returns
+    /// `{ state, hit, steps }`; `exempt_first` skips the check for the first
+    /// executed instruction (used on resume). Empty `breakpoints` is the
+    /// zero-overhead fast path (== tickFrame).
+    #[wasm_bindgen(js_name = tickFrameUntil)]
+    pub fn tick_frame_until(
+        &mut self,
+        elapsed_ns: u64,
+        breakpoints: &[u16],
+        exempt_first: bool,
+    ) -> Result<JsValue, JsValue> {
+        let r: TickResult = self
+            .session
+            .tick_frame_until(elapsed_ns, breakpoints, exempt_first)
+            .map_err(|e| JsValue::from_str(e))?;
+        let res = TickResultJs { state: r.snapshot.into(), hit: r.hit, steps: r.steps };
+        serde_wasm_bindgen::to_value(&res).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen(js_name = resetGovernor)]

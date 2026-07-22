@@ -29,7 +29,12 @@ export const DEFAULT_LAYOUT: SerializedNode = {
       active: "ppu",
       fraction: 0.2958828540558511,
     },
-    { type: "leaf", panels: ["disasm"], fraction: 0.37964906083776595 },
+    {
+      type: "leaf",
+      panels: ["editor", "disasm"],
+      active: "editor",
+      fraction: 0.37964906083776595,
+    },
     {
       type: "branch",
       orientation: "column",

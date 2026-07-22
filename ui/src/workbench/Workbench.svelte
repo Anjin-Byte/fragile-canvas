@@ -27,6 +27,7 @@
   import CpuPanel from "./panels/CpuPanel.svelte";
   import MemoryPanel from "./panels/MemoryPanel.svelte";
   import DisasmPanel from "./panels/DisasmPanel.svelte";
+  import EditorPanel from "./panels/EditorPanel.svelte";
   import PpuPanel from "./panels/PpuPanel.svelte";
   import ApuPanel from "./panels/ApuPanel.svelte";
   import IoPanel from "./panels/IoPanel.svelte";
@@ -45,6 +46,7 @@
   const PANEL_DEFS: PanelDef[] = [
     { id: "screen", title: "Screen", closable: false, minWidth: 220, minHeight: 240 },
     { id: "cpu", title: "CPU", minWidth: 190 },
+    { id: "editor", title: "Editor", minWidth: 260 },
     { id: "disasm", title: "Disassembly", minWidth: 230 },
     { id: "memory", title: "Memory", minWidth: 360 },
     { id: "ppu", title: "PPU", minWidth: 220 },
@@ -78,15 +80,32 @@
     emu.skipBoot = settings.skipBoot;
   });
 
-  // Bring the Memory tab to front when another panel requests a view of it
-  // (e.g. "Show in Memory" from the Disassembly panel).
+  // Reveal requests: bring the target panel to front (opening it if closed) so
+  // the panel's own effect can scroll to the requested spot. Each is an
+  // independent seq-countered signal ("Show in Memory", "Reveal in source", …).
   let lastMemSeq = 0;
+  let lastSourceSeq = 0;
+  let lastDisasmSeq = 0;
   $effect(() => {
     const r = emu.memoryRequest;
-    if (r.seq === lastMemSeq) return;
-    lastMemSeq = r.seq;
-    const leaf = model.findPanel("memory");
-    if (leaf) model.activatePanel(leaf.id, "memory");
+    if (r.seq !== lastMemSeq) {
+      lastMemSeq = r.seq;
+      model.openPanel("memory");
+    }
+  });
+  $effect(() => {
+    const r = emu.sourceRequest;
+    if (r.seq !== lastSourceSeq) {
+      lastSourceSeq = r.seq;
+      model.openPanel("editor");
+    }
+  });
+  $effect(() => {
+    const r = emu.disasmRequest;
+    if (r.seq !== lastDisasmSeq) {
+      lastDisasmSeq = r.seq;
+      model.openPanel("disasm");
+    }
   });
 
   // ─── Keyboard: joypad + transport ──────────────────────────────────────
@@ -224,6 +243,8 @@
           <CpuPanel {emu} />
         {:else if id === "memory"}
           <MemoryPanel {emu} />
+        {:else if id === "editor"}
+          <EditorPanel {emu} />
         {:else if id === "disasm"}
           <DisasmPanel {emu} />
         {:else if id === "ppu"}

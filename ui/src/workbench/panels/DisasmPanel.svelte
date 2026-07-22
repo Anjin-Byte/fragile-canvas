@@ -9,7 +9,8 @@
    * scrolling / the address box / a jump switch to a free view (⌖ PC
    * re-follows). Click a JP/JR/CALL/RST target to navigate; Back / Alt+←
    * returns. Right-click for per-instruction actions incl. Run-to-here.
-   * Gutter dots toggle persisted breakpoints — not yet enforced.
+   * Gutter dots toggle breakpoints — enforced by bounded Run and (when the
+   * backend supports it) real-time Launch/Play.
    */
   import { ContextMenu, type ContextMenuItem } from "@gestalt/phi";
   import type { DisasmLine } from "../../types";
@@ -72,6 +73,15 @@
     if (!emu.romLoaded || !emu.canDisasm) return;
     if (emu.running && _ % 6 !== 0) return;
     void refresh();
+  });
+
+  // Reveal-in-disasm (from the editor/memory): navigate to the requested address.
+  let lastDisasmSeq = 0;
+  $effect(() => {
+    const r = emu.disasmRequest;
+    if (r.seq === lastDisasmSeq) return;
+    lastDisasmSeq = r.seq;
+    goTo(r.addr);
   });
 
   // ─── Derived annotations ───────────────────────────────────────────────
@@ -225,7 +235,7 @@
     if (!menu) return [];
     const line = menu.line;
     const target = refTarget(line);
-    const isBp = emu.breakpoints.has(line.addr);
+    const isBp = emu.hasBreakpointAtAddr(line.addr);
     const items: ContextMenuItem[] = [];
     if (emu.canStepInstruction) {
       items.push({ id: "runto", label: `Run to $${hex16(line.addr)}` });
@@ -237,6 +247,9 @@
     const memRef = operandRef(line);
     if (memRef !== undefined) {
       items.push({ id: "mem", label: `Show $${hex16(memRef)} in Memory` });
+    }
+    if (emu.lineForAddr(line.addr) != null) {
+      items.push({ id: "reveal-source", label: "Reveal in source" });
     }
     items.push({ id: "bp", label: isBp ? "Remove breakpoint" : "Set breakpoint", separator: true });
     items.push({ id: "view", label: "Set view here" });
@@ -263,6 +276,9 @@
         if (r !== undefined) emu.requestMemoryView(r);
         break;
       }
+      case "reveal-source":
+        emu.revealInSource({ kind: "addr", addr: line.addr });
+        break;
       case "bp":
         emu.toggleBreakpoint(line.addr);
         break;
@@ -356,7 +372,9 @@
     <div class="disasm-rows" bind:this={rowsEl} onwheel={onWheel}>
       {#if lines.length > 0}
         <svg class="arrow-svg" style="left:16px;width:{ZONE_W}px" aria-hidden="true">
-          {#each arrowPaths as p (p.line)}
+          <!-- Key by index: two branches can share identical geometry (e.g.
+               several `JR NZ, @-2` self-loops), so the path string isn't unique. -->
+          {#each arrowPaths as p, i (i)}
             <path class="arrow-line" class:active={p.active} d={p.line} />
             <path class="arrow-head" class:active={p.active} d={p.head} />
           {/each}
@@ -368,7 +386,7 @@
             <div class="disasm-label">{label}:</div>
           {/if}
           {@const isPc = emu.cpu?.pc === row.addr}
-          {@const isBp = emu.breakpoints.has(row.addr)}
+          {@const isBp = emu.hasBreakpointAtAddr(row.addr)}
           {@const link = linkPart(row)}
           {@const cmt = comment(row)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -376,7 +394,7 @@
             <button
               class="disasm-gutter"
               class:bp={isBp}
-              title={isBp ? "Breakpoint (not yet enforced)" : isPc ? "Current instruction" : "Set breakpoint"}
+              title={isBp ? "Breakpoint" : isPc ? "Current instruction" : "Set breakpoint"}
               aria-label="Toggle breakpoint at {hex16(row.addr)}"
               onclick={() => emu.toggleBreakpoint(row.addr)}
             >
@@ -406,7 +424,15 @@
       {/if}
     </div>
 
-    <div class="disasm-footer">breakpoints persist but are not yet enforced</div>
+    <div class="disasm-footer" class:stopped={emu.pausedAtBreakpoint}>
+      {#if emu.pausedAtBreakpoint && emu.breakpointPc != null}
+        ⏸ stopped at breakpoint ${hex16(emu.breakpointPc)}
+      {:else if emu.canBreakRealtime}
+        breakpoints stop execution
+      {:else}
+        breakpoints persist but aren't enforced on this backend
+      {/if}
+    </div>
   {:else}
     <div class="empty-hint">
       Disassembly needs a backend with the sm83-isa export (rebuild the WASM package).
@@ -678,6 +704,12 @@
     color: var(--text-faint);
     border-top: 1px solid var(--stroke-lo);
     flex-shrink: 0;
+  }
+
+  .disasm-footer.stopped {
+    color: var(--interactive);
+    font-family: var(--font-mono);
+    font-weight: 500;
   }
 
   .empty-hint {

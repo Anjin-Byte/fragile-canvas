@@ -4,5 +4,5 @@
 pub mod assemble;
 pub mod expr;
 
-pub use assemble::{assemble, Assembled, Diagnostic};
+pub use assemble::{assemble, Assembled, Diagnostic, SrcSpan};
 pub use expr::{eval, parse_expr, Expr};

@@ -356,6 +356,22 @@ impl Cartridge {
         }
     }
 
+    /// A header-free ROM-only cartridge: exactly 32 KiB (two banks), `Mbc::None`,
+    /// with the header bytes (0x0147 type / 0x0148 size) NEVER parsed — assembled
+    /// user code is free to occupy them without changing the MBC or ROM size.
+    /// Used to run assembled snippets deterministically (see `Session::load_code`).
+    pub fn rom_only(image: &[u8]) -> Self {
+        let mut rom = vec![0xFFu8; ROM_BANK_SIZE * 2];
+        let n = image.len().min(rom.len());
+        rom[..n].copy_from_slice(&image[..n]);
+        Self {
+            rom,
+            ram: vec![0xFF; RAM_BANK_SIZE],
+            mbc: Mbc::None,
+            has_battery: false,
+        }
+    }
+
     /// Parse the cartridge header and load the ROM.
     pub fn new(data: &[u8]) -> Self {
         let type_byte    = data.get(0x0147).copied().unwrap_or(0x00);

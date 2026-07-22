@@ -103,6 +103,11 @@ impl Bus {
         self.cart = Cartridge::new(data);
     }
 
+    /// Install a pre-built cartridge (e.g. a synthesized ROM-only image).
+    pub fn install_cartridge(&mut self, cart: Cartridge) {
+        self.cart = cart;
+    }
+
     // ── Debug tap ────────────────────────────────────────────────────
 
     /// Start logging all accesses to `addr`.  Call `drain_access_log()`
