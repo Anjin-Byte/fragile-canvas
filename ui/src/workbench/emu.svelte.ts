@@ -432,6 +432,52 @@ export class EmuController {
     }
   }
 
+  /** CALL opcodes (CALL nn + CALL cc,nn) — step-over runs past their return. */
+  static #CALL_OPS = new Set([0xcd, 0xc4, 0xcc, 0xd4, 0xdc]);
+
+  /**
+   * Source-level "step into": step instructions until the PC lands on a
+   * DIFFERENT source line (or leaves the map / self-loops). Since one source
+   * line assembles to one instruction, this is normally a single step. Returns
+   * the new source line, or null. Capped, and stops on a self-loop, so it can't
+   * spin the page.
+   */
+  async stepSourceLine(maxInstr = 10_000): Promise<number | null> {
+    if (this.running || !this.romLoaded || !this.backend.stepInstruction) return null;
+    this.#clearBreakPause();
+    const startLine = this.currentSourceLine;
+    try {
+      for (let i = 0; i < maxInstr; i++) {
+        const beforePc = this.cpu?.pc;
+        this.cpu = await this.backend.stepInstruction();
+        if (this.currentSourceLine !== startLine) break; // reached a new line
+        if (this.cpu?.pc === beforePc) break; // self-loop — PC didn't advance
+      }
+      this.frameCount++;
+      await this.#drawFrame();
+      return this.currentSourceLine;
+    } catch (e) {
+      this.error = String(e);
+      return null;
+    }
+  }
+
+  /**
+   * Source-level "step over": if the current instruction is a CALL, run to its
+   * return address (skipping the subroutine); otherwise a plain source step.
+   */
+  async stepOverLine(): Promise<number | null> {
+    if (this.running || !this.romLoaded) return null;
+    const pc = this.cpu?.pc;
+    if (pc == null) return null;
+    const [op] = await this.read(pc, 1);
+    if (EmuController.#CALL_OPS.has(op)) {
+      await this.runTo((pc + 3) & 0xffff); // CALL is 3 bytes → return address
+      return this.currentSourceLine;
+    }
+    return this.stepSourceLine();
+  }
+
   /**
    * Run until PC reaches `addr` (stopping before executing it), or the program
    * halts / self-loops / the `budget` is spent. Returns whether the target was

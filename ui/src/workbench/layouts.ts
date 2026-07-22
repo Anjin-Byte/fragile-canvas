@@ -16,32 +16,45 @@ export interface Preset {
 
 /**
  * The default workbench arrangement (also the fromStorage fallback for a
- * fresh install). Inspector tabs (PPU/APU/IO/Memory) left, disassembly
- * center, screen over CPU at right. Captured from a hand-arranged layout.
+ * fresh install). APU/CPU/Memory tabs over I/O at left, editor/disasm tabs
+ * center, screen over PPU at right. Captured from a hand-arranged layout.
  */
 export const DEFAULT_LAYOUT: SerializedNode = {
   type: "branch",
   orientation: "row",
   children: [
     {
-      type: "leaf",
-      panels: ["ppu", "apu", "io", "memory"],
-      active: "ppu",
-      fraction: 0.2958828540558511,
+      type: "branch",
+      orientation: "column",
+      fraction: 0.2393617021276596,
+      children: [
+        {
+          type: "leaf",
+          panels: ["apu", "cpu", "memory"],
+          active: "cpu",
+          fraction: 0.4170574558638083,
+        },
+        {
+          type: "leaf",
+          panels: ["io"],
+          active: "io",
+          fraction: 0.5829425441361917,
+        },
+      ],
     },
     {
       type: "leaf",
       panels: ["editor", "disasm"],
       active: "editor",
-      fraction: 0.37964906083776595,
+      fraction: 0.4341755319148936,
     },
     {
       type: "branch",
       orientation: "column",
-      fraction: 0.324468085106383,
+      fraction: 0.32646276595744683,
       children: [
-        { type: "leaf", panels: ["screen"], fraction: 0.5941955798479087 },
-        { type: "leaf", panels: ["cpu"], fraction: 0.4058044201520912 },
+        { type: "leaf", panels: ["screen"], active: "screen", fraction: 0.5941955798479087 },
+        { type: "leaf", panels: ["ppu"], active: "ppu", fraction: 0.4058044201520912 },
       ],
     },
   ],

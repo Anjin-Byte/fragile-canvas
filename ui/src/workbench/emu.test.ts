@@ -53,7 +53,11 @@ class FakeBackend implements EmulatorBackend {
   async step(): Promise<CpuState> {
     return this.cur;
   }
+  // Scripted PC sequence: each stepInstruction advances `cur` to the next PC.
+  stepSequence: number[] = [];
   async stepInstruction(): Promise<CpuState> {
+    const pc = this.stepSequence.shift();
+    if (pc !== undefined) this.cur = cpu(pc);
     return this.cur;
   }
   async tickFrame(): Promise<CpuState> {
@@ -76,8 +80,10 @@ class FakeBackend implements EmulatorBackend {
   async getState(): Promise<CpuState> {
     return this.cur;
   }
-  async readMemory(): Promise<number[]> {
-    return [];
+  // Byte-addressable memory the test can seed (opcodes for step-over).
+  mem = new Map<number, number>();
+  async readMemory(addr: number, length: number): Promise<number[]> {
+    return Array.from({ length }, (_, i) => this.mem.get(addr + i) ?? 0);
   }
   async reset(): Promise<void> {
     this.resetCount++;
@@ -206,7 +212,7 @@ describe("EmuController — editor default seeding", () => {
   it("adopts the shipped default on a fresh browser", () => {
     localStorage.clear();
     const emu = new EmuController(new FakeBackend());
-    expect(emu.source).toContain("Okra demo"); // current STARTER_SOURCE
+    expect(emu.source).toContain("Okra marquee"); // current STARTER_SOURCE
   });
 
   it("migrates an un-edited legacy default (pre-seed-marker) to the current one", () => {
@@ -218,7 +224,7 @@ describe("EmuController — editor default seeding", () => {
     // No seed marker — the pre-migration state.
     const emu = new EmuController(new FakeBackend());
     expect(emu.source).not.toContain("boot ROM");
-    expect(emu.source).toContain("Okra demo");
+    expect(emu.source).toContain("Okra marquee");
   });
 
   it("preserves a user's edited source", () => {
@@ -329,6 +335,98 @@ describe("EmuController — run-to-cursor (editor)", () => {
     be.runCodeBreakpoints = null;
     await emu.runToLine(2); // addrForLine(2) = $102
     expect(be.runCodeBreakpoints).toEqual([0x102]); // one native run, target as bp
+  });
+});
+
+describe("EmuController — source-level stepping", () => {
+  // Canned map: line 1 → $100 (len 2, covers $100-$101), line 2 → $102 (len 1).
+  async function loaded() {
+    localStorage.clear();
+    const be = new FakeBackend();
+    const emu = new EmuController(be);
+    await emu.runCurrent(); // loads code + map, mode=code, running=false
+    emu.cpu = cpu(0x100); // park at line 1
+    return { be, emu };
+  }
+
+  it("stepSourceLine advances to the next source line", async () => {
+    const { be, emu } = await loaded();
+    be.stepSequence = [0x102]; // one step lands on line 2
+    expect(await emu.stepSourceLine()).toBe(2);
+    expect(emu.cpu?.pc).toBe(0x102);
+  });
+
+  it("steps through instructions on the same line until the line changes", async () => {
+    const { be, emu } = await loaded();
+    be.stepSequence = [0x101, 0x102]; // $101 is still line 1; $102 is line 2
+    expect(await emu.stepSourceLine()).toBe(2);
+    expect(be.stepSequence).toHaveLength(0); // consumed both steps
+  });
+
+  it("stops at a self-loop instead of spinning", async () => {
+    const { be, emu } = await loaded();
+    be.stepSequence = [0x100, 0x100, 0x100]; // PC never advances (jr $)
+    expect(await emu.stepSourceLine()).toBe(1);
+    expect(be.stepSequence).toHaveLength(2); // stopped after the first step
+  });
+
+  it("returns null when the step leaves the source map", async () => {
+    const { be, emu } = await loaded();
+    be.stepSequence = [0x500]; // unmapped
+    expect(await emu.stepSourceLine()).toBeNull();
+  });
+
+  it("is a no-op while running or with nothing loaded", async () => {
+    const { emu } = await loaded();
+    emu.running = true;
+    expect(await emu.stepSourceLine()).toBeNull();
+
+    localStorage.clear();
+    const fresh = new EmuController(new FakeBackend());
+    expect(await fresh.stepSourceLine()).toBeNull();
+  });
+
+  it("clears a paused-at-breakpoint state (forward progress)", async () => {
+    const { be, emu } = await loaded();
+    emu.pausedAtBreakpoint = true;
+    emu.breakpointPc = 0x100;
+    be.stepSequence = [0x102];
+    await emu.stepSourceLine();
+    expect(emu.pausedAtBreakpoint).toBe(false);
+    expect(emu.breakpointPc).toBeNull();
+  });
+
+  it("stepOverLine steps a non-CALL like a source step", async () => {
+    const { be, emu } = await loaded();
+    be.mem.set(0x100, 0x00); // NOP at PC → not a CALL
+    be.stepSequence = [0x102];
+    be.runCodeBreakpoints = null;
+    expect(await emu.stepOverLine()).toBe(2);
+    expect(be.runCodeBreakpoints).toBeNull(); // did NOT run-to (it stepped)
+  });
+
+  it("stepOverLine runs a CALL to its return address via the native runner", async () => {
+    const { be, emu } = await loaded();
+    be.mem.set(0x100, 0xcd); // CALL nn at PC
+    be.runCodeBreakpoints = null;
+    await emu.stepOverLine();
+    expect(be.runCodeBreakpoints).toEqual([0x103]); // return address = PC + 3
+  });
+
+  it("recognizes every CALL form for step-over", async () => {
+    for (const op of [0xcd, 0xc4, 0xcc, 0xd4, 0xdc]) {
+      const { be, emu } = await loaded();
+      be.mem.set(0x100, op);
+      be.runCodeBreakpoints = null;
+      await emu.stepOverLine();
+      expect(be.runCodeBreakpoints).toEqual([0x103]);
+    }
+  });
+
+  it("stepOverLine is a no-op with nothing loaded", async () => {
+    localStorage.clear();
+    const emu = new EmuController(new FakeBackend());
+    expect(await emu.stepOverLine()).toBeNull();
   });
 });
 
