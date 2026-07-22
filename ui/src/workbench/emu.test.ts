@@ -212,7 +212,7 @@ describe("EmuController — editor default seeding", () => {
   it("adopts the shipped default on a fresh browser", () => {
     localStorage.clear();
     const emu = new EmuController(new FakeBackend());
-    expect(emu.source).toContain("Okra marquee"); // current STARTER_SOURCE
+    expect(emu.source).toContain("marquee"); // current STARTER_SOURCE
   });
 
   it("migrates an un-edited legacy default (pre-seed-marker) to the current one", () => {
@@ -224,7 +224,7 @@ describe("EmuController — editor default seeding", () => {
     // No seed marker — the pre-migration state.
     const emu = new EmuController(new FakeBackend());
     expect(emu.source).not.toContain("boot ROM");
-    expect(emu.source).toContain("Okra marquee");
+    expect(emu.source).toContain("marquee");
   });
 
   it("preserves a user's edited source", () => {

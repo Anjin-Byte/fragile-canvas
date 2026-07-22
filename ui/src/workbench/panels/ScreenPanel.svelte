@@ -6,7 +6,7 @@
    * Shows the hero / ROM-load state until a ROM is running.
    */
   import Screen from "../../components/Screen.svelte";
-  import { FolderOpen, Gamepad2 } from "lucide-svelte";
+  import { FolderOpen, Gamepad2, Play } from "lucide-svelte";
   import type { EmuController } from "../emu.svelte.js";
   import type { Settings } from "../settings.svelte.js";
 
@@ -47,6 +47,8 @@
 
   async function onFileSelect() {
     const file = fileInput?.files?.[0];
+    // Reset so re-picking the SAME file still fires onchange (else silent no-op).
+    if (fileInput) fileInput.value = "";
     if (!file) return;
     await emu.loadRomBytes(await file.arrayBuffer());
   }
@@ -71,20 +73,47 @@
         class="hidden-input"
         onchange={onFileSelect}
       />
-      <button class="hero-btn" onclick={() => fileInput?.click()}>
-        <FolderOpen size={14} /> Load a ROM
-      </button>
-      {#if emu.bundledRoms.length > 0}
-        <div class="hero-bundled">
-          {#each emu.bundledRoms as rom (rom.id)}
-            <button class="hero-rom" onclick={() => emu.loadBundled(rom.id)}>
-              <Gamepad2 size={12} />
-              <span>{rom.title}</span>
+      <div class="hero-content">
+        {#if emu.canAssemble}
+          <!-- Assembly is the primary path: run what's already in the editor. -->
+          <button class="hero-btn" onclick={() => void emu.launchCurrent()}>
+            <Play size={14} /> Launch
+          </button>
+          <span class="hero-sub">
+            Runs the program in the editor <kbd class="hero-kbd">⌘↵</kbd>
+          </span>
+          <div class="hero-or"><span>or</span></div>
+          <div class="hero-alt">
+            <button class="hero-rom" onclick={() => fileInput?.click()}>
+              <FolderOpen size={12} />
+              <span>Load a ROM</span>
             </button>
-          {/each}
-        </div>
-      {/if}
-      <span class="hero-hint">or drop a .gb file anywhere</span>
+            {#each emu.bundledRoms as rom (rom.id)}
+              <button class="hero-rom" onclick={() => emu.loadBundled(rom.id)}>
+                <Gamepad2 size={12} />
+                <span>{rom.title}</span>
+              </button>
+            {/each}
+          </div>
+          <span class="hero-hint">drop a .gb file anywhere</span>
+        {:else}
+          <!-- No assembler (e.g. desktop): keep ROM-loading as the primary path. -->
+          <button class="hero-btn" onclick={() => fileInput?.click()}>
+            <FolderOpen size={14} /> Load a ROM
+          </button>
+          {#if emu.bundledRoms.length > 0}
+            <div class="hero-bundled">
+              {#each emu.bundledRoms as rom (rom.id)}
+                <button class="hero-rom" onclick={() => emu.loadBundled(rom.id)}>
+                  <Gamepad2 size={12} />
+                  <span>{rom.title}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+          <span class="hero-hint">or drop a .gb file anywhere</span>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -118,39 +147,114 @@
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
-    background: oklch(0 0 0 / 35%);
+    /* Vignette: lighter over the CTA, darker at the edges → draws the eye in. */
+    background: radial-gradient(
+      ellipse 60% 60% at center,
+      oklch(0 0 0 / 20%) 0%,
+      oklch(0 0 0 / 48%) 100%
+    );
   }
 
-  .hero-title {
+  .hero-content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 13px;
+    animation: hero-rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
+  @keyframes hero-rise {
+    from {
+      opacity: 0;
+      transform: translateY(7px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .hero-sub {
+    margin-top: -5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    color: var(--text-subtle);
+  }
+
+  .hero-kbd {
     font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 500;
-    color: var(--accent);
-    letter-spacing: 0.02em;
+    font-size: 9px;
+    line-height: 1;
+    padding: 2px 4px;
+    color: var(--text-mid);
+    background: var(--fill-mid);
+    border: 1px solid var(--stroke-mid);
+    border-radius: 3px;
+  }
+
+  /* "or" hairline divider between the Launch CTA and the ROM options. */
+  .hero-or {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 150px;
+    margin-top: 3px;
+    font-family: var(--font-sans);
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+
+  .hero-or::before,
+  .hero-or::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--stroke-mid);
+  }
+
+  /* Secondary ROM options, quieter than the Launch CTA and grouped in a row. */
+  .hero-alt {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
   }
 
   .hero-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 7px 16px;
+    padding: 8px 18px;
     font-family: var(--font-sans);
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     color: oklch(0.18 0.01 115);
     background: var(--accent-oklch, var(--interactive));
     border: 1px solid oklch(0.82 0.2 115);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background 0.15s ease;
+    box-shadow:
+      0 4px 12px oklch(0.76 0.18 115 / 14%),
+      0 2px 6px oklch(0 0 0 / 30%);
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
   }
 
   .hero-btn:hover {
     background: var(--interactive-hi);
+    box-shadow:
+      0 5px 14px oklch(0.76 0.18 115 / 20%),
+      0 2px 6px oklch(0 0 0 / 30%);
+    transform: translateY(-1px);
+  }
+
+  .hero-btn:active {
+    transform: translateY(0);
   }
 
   .hero-bundled {

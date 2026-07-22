@@ -35,6 +35,22 @@ function swapEmu(): EmulatorWasm {
   return emu;
 }
 
+/**
+ * Start/resume audio as a best-effort side effect. Deliberately fire-and-forget:
+ * `AudioContext.resume()` on a suspended context hangs indefinitely when there's
+ * no live user activation (autoplay policy). If a load method ever `await`s that,
+ * a hung resume silently swallows the ROM load — so audio must never gate a load.
+ * Worst case here: the ROM runs with no sound until the next real user gesture.
+ */
+function kickAudio() {
+  void audio
+    .init()
+    .then(() => audio.resume())
+    .catch(() => {
+      /* audio unavailable — the machine still runs */
+    });
+}
+
 function drainAndPushAudio() {
   if (!emu) return;
   const wasmSamples = emu.drainAudioSamples();
@@ -48,26 +64,26 @@ function drainAndPushAudio() {
 export const wasmBackend: EmulatorBackend = {
   async loadRom(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
-    swapEmu();
-    await audio.init();
-    await audio.resume();
-    return emu.loadRom(cartRom) as CpuState;
+    const m = swapEmu();
+    const state = m.loadRom(cartRom) as CpuState; // load first — never gate on audio
+    kickAudio();
+    return state;
   },
 
   async loadRomNoBoot(cartRom: Uint8Array): Promise<CpuState> {
     await ensureInit();
-    swapEmu();
-    await audio.init();
-    await audio.resume();
-    return emu.loadRomNoBoot(cartRom) as CpuState;
+    const m = swapEmu();
+    const state = m.loadRomNoBoot(cartRom) as CpuState;
+    kickAudio();
+    return state;
   },
 
   async loadDefaultRom(): Promise<CpuState> {
     await ensureInit();
-    swapEmu();
-    await audio.init();
-    await audio.resume();
-    return emu.loadDefaultRom() as CpuState;
+    const m = swapEmu();
+    const state = m.loadDefaultRom() as CpuState;
+    kickAudio();
+    return state;
   },
 
   listBundledRoms(): BundledRomInfo[] {
@@ -80,29 +96,31 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadBundledRom(id: string): Promise<CpuState> {
     await ensureInit();
-    swapEmu();
-    await audio.init();
-    await audio.resume();
+    const m = swapEmu();
     // loadBundledRom is available after WASM rebuild; fall back to loadDefaultRom
-    if (typeof (emu as any).loadBundledRom === "function") {
-      return (emu as any).loadBundledRom(id) as CpuState;
-    }
-    return emu.loadDefaultRom() as CpuState;
+    const state = (
+      typeof (m as any).loadBundledRom === "function"
+        ? (m as any).loadBundledRom(id)
+        : m.loadDefaultRom()
+    ) as CpuState;
+    kickAudio();
+    return state;
   },
 
   async loadBundledRomNoBoot(id: string): Promise<CpuState> {
     await ensureInit();
-    swapEmu();
-    await audio.init();
-    await audio.resume();
+    const m = swapEmu();
     // Available after a WASM rebuild; fall back to the boot path otherwise.
-    if (typeof (emu as any).loadBundledRomNoBoot === "function") {
-      return (emu as any).loadBundledRomNoBoot(id) as CpuState;
+    let state: CpuState;
+    if (typeof (m as any).loadBundledRomNoBoot === "function") {
+      state = (m as any).loadBundledRomNoBoot(id) as CpuState;
+    } else if (typeof (m as any).loadBundledRom === "function") {
+      state = (m as any).loadBundledRom(id) as CpuState;
+    } else {
+      state = m.loadDefaultRom() as CpuState;
     }
-    if (typeof (emu as any).loadBundledRom === "function") {
-      return (emu as any).loadBundledRom(id) as CpuState;
-    }
-    return emu.loadDefaultRom() as CpuState;
+    kickAudio();
+    return state;
   },
 
   async step(ticks: number): Promise<CpuState> {
@@ -193,10 +211,10 @@ export const wasmBackend: EmulatorBackend = {
 
   async loadCode(origin: number, bytes: Uint8Array, entry: number): Promise<CpuState> {
     await ensureInit();
-    swapEmu(); // fresh machine per Run
-    await audio.init();
-    await audio.resume();
-    return emu.loadCode(origin, bytes, entry) as CpuState;
+    const m = swapEmu(); // fresh machine per Run
+    const state = m.loadCode(origin, bytes, entry) as CpuState;
+    kickAudio();
+    return state;
   },
 
   async runCode(

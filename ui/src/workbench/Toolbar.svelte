@@ -65,6 +65,8 @@
 
   async function onFileSelect() {
     const file = fileInput?.files?.[0];
+    // Reset so re-picking the SAME file still fires onchange (else silent no-op).
+    if (fileInput) fileInput.value = "";
     if (!file) return;
     await emu.loadRomBytes(await file.arrayBuffer());
   }

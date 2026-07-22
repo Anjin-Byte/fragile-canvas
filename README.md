@@ -10,11 +10,11 @@
 
 [![Okra running Tobu Tobu Girl DX](docs/screenshots/hero.png)](https://anjin-byte.github.io/okra-emu/)
 
-It runs in the browser via WebAssembly, and the debugger lets you poke at a running game — disassembly, CPU and PPU registers, and memory.
+It runs in the browser via WebAssembly. Load a ROM, or write SM83 assembly straight into the built-in editor and run it directly — either way, the debugger lets you poke at a running program: disassembly, CPU and PPU registers, memory, and breakpoints that actually stop execution, live or bounded.
 
 ## Status
 
-A personal project and a work in progress. The core is reasonably accurate — it passes Blargg's `cpu_instrs` and most of the timing tests — but there are rough edges: a couple of timing cases still fail (see [Accuracy](#accuracy)), the debugger's breakpoints aren't enforced yet, and the desktop build is older than the web one.
+A personal project and a work in progress. The core is reasonably accurate — it passes Blargg's `cpu_instrs` and most of the timing tests — but there are rough edges: a couple of timing cases still fail (see [Accuracy](#accuracy)), and the desktop build is older than the web one.
 
 ## Running it
 
@@ -27,6 +27,10 @@ make test    # run the test suites
 # or run a ROM headless, from the command line:
 cargo run --release -p fragile-canvas -- path/to/rom.gb
 ```
+
+## Writing assembly
+
+The editor assembles SM83 source as you type — a live listing gutter shows the address, bytes, and cycle count for each line, with inlay hints for resolved symbols and syntax highlighting. **Launch** runs it live, like a loaded ROM; **Run** executes to a breakpoint or `HALT` in one bounded burst. Breakpoints, stepping, and "reveal in disassembly" work the same whether the code came from the editor or a cartridge.
 
 ## How the CPU works
 
